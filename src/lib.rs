@@ -6,4 +6,5 @@
 //! and rate limiter, the DeepSeek HTTP call). Only the IO layer knows about
 //! geomyidae or the network; the core is deterministic and clock-free.
 
+pub mod cosmic;
 pub mod deck;
