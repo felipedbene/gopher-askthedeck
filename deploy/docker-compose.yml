@@ -16,10 +16,11 @@ services:
     restart: unless-stopped
     ports:
       - "7072:7072"
-    # The image's ENTRYPOINT is `geomyidae -d -b /srv -p 7072`; this appends the
-    # public hostname so geomyidae substitutes the `server` token in every .gph /
-    # .dcgi line with a name external clients can actually dial (otherwise it uses
-    # the container id). Keeps the image itself host-agnostic.
+    # Appends to the image ENTRYPOINT (`geomyidae -d -b /srv -p 7072`): -h is the
+    # public hostname geomyidae substitutes for the `server` token in every
+    # .gph/.dcgi line, so external clients get a dialable address (otherwise it
+    # uses the container id). Keeps the image itself host-agnostic. (CGI/DCGI is
+    # enabled by extension + exec bit; -c is chroot and would crash as nobody.)
     command: ["-h", "gopher.debene.dev"]
     environment:
       # The DeepSeek key (from deploy/.env). Inherited by the dcgi process.

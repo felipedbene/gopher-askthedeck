@@ -71,5 +71,9 @@ ENV ATD_STATE_DIR=/var/cache/atd
 
 USER nobody:nogroup
 EXPOSE 7072
-# -d: stay in the foreground; -b: serve the baked tree; -p: port.
+# -d: stay in the foreground; -b: serve the baked tree; -p: port. CGI/DCGI is
+# enabled by file extension + exec bit (no flag). The public hostname (-h) is
+# appended at deploy time (see deploy/docker-compose.yml) to keep the image
+# host-agnostic. (Note: -c is chroot and needs privilege we don't have as
+# nobody — do not add it.)
 ENTRYPOINT ["geomyidae", "-d", "-b", "/srv", "-p", "7072"]

@@ -39,6 +39,32 @@ without the `net` feature.
   hole, Watchtower-swapped), amd64-only CI (build/test/clippy/fmt × net+no-net,
   gitleaks, GHCR push), README/CLAUDE/this log, gitleaks + pre-commit.
 
+### Deployed — live at gopher://gopher.debene.dev:7072/
+
+Pushed to GitHub, image built by CI to GHCR (kept **private**; the VPS docker
+is logged into ghcr.io to pull it), and brought up via compose on the RackNerd
+box beside cta (:70) and blog (:7071). Verified end to end, externally:
+root menu, card pages, and the dynamic draw all serve; a real DeepSeek reading
+takes ~9s and the identical repeat is 0s + byte-identical (cache hit, zero LLM
+calls). The DeepSeek key is live in the container.
+
+Two geomyidae flag findings (the docs were thin/contradictory — verified
+empirically on the box):
+
+- **`-h gopher.debene.dev` is required.** Without it geomyidae substitutes the
+  `.gph`/`.dcgi` `server` token with the container id, so the type-7 item and
+  every link pointed external clients at an unreachable host. Passed via the
+  compose `command` (keeps the image host-agnostic).
+- **`-c` is chroot, NOT cgi-enable.** The usage string lists `-c`; adding it
+  crash-loops as `nobody` ("chroot: Operation not permitted"). CGI/DCGI is
+  enabled purely by the `.dcgi` extension + exec bit, exactly as CGI.md says —
+  no flag. Do not pass `-c`.
+
+CI note: the first push's gitleaks job went red on the known root-commit range
+bug (`<root>^..HEAD` is an invalid range; it logged "no leaks found in partial
+scan"). `test` + `image` were green and the image published; the next push
+cleared it.
+
 ### Decisions / open questions
 
 - **Topology:** chose an independent geomyidae container on **:7072** (mirrors

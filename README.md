@@ -90,15 +90,18 @@ cargo test --all --no-default-features    # the same suite with no TLS stack
 
 ```bash
 docker build -t gopher-askthedeck .
-docker run --rm -p 7072:7072 -e DEEPSEEK_API_KEY=sk-... gopher-askthedeck
+# -h sets the hostname geomyidae advertises in menu lines (so the type-7 item +
+# links are dialable); pass your public name in real deploys.
+docker run --rm -p 7072:7072 -e DEEPSEEK_API_KEY=sk-... gopher-askthedeck -h 127.0.0.1
 lynx gopher://127.0.0.1:7072/
 ```
 
 The image bakes the static tree, builds geomyidae from source, and drops in a
 tiny `draw.dcgi` wrapper that execs the binary's `draw` path. geomyidae runs it
 purely because of the `.dcgi` extension + exec bit — there is **no daemon-wide
-CGI flag**, so enabling the dcgi here changes nothing about how any sibling
-static hole is served.
+CGI flag** (and note `-c` is *chroot*, not cgi-enable: it crash-loops as the
+`nobody` user — don't add it), so enabling the dcgi here changes nothing about
+how any sibling static hole is served.
 
 ## Deploy
 
