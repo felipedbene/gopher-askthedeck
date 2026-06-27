@@ -19,6 +19,10 @@ use gopher_askthedeck::{dcgi, site};
 
 const DEFAULT_OUT: &str = "public";
 const DEFAULT_KEEP: usize = 3;
+/// Hub cross-links advertised in the root menu (the hub topology shared with
+/// cta/blog). Override with `--cta-link` / `--phlog-link`; `none` disables one.
+const DEFAULT_CTA_LINK: &str = "gopher://gopher.debene.dev:70";
+const DEFAULT_PHLOG_LINK: &str = "gopher://gopher.debene.dev:7071";
 
 /// An owned reading generator (the boxed counterpart of `dcgi::Llm`).
 type BoxedLlm = Box<dyn Fn(&str) -> Option<String>>;
@@ -50,12 +54,17 @@ fn run_build(flags: &[String]) -> std::io::Result<()> {
     let mut out = DEFAULT_OUT.to_string();
     let mut base = String::new();
     let mut keep = DEFAULT_KEEP;
+    // Hub cross-links to the sibling holes (the hub topology). `none` disables one.
+    let mut cta_raw = DEFAULT_CTA_LINK.to_string();
+    let mut phlog_raw = DEFAULT_PHLOG_LINK.to_string();
 
     let mut it = flags.iter();
     while let Some(f) = it.next() {
         match f.as_str() {
             "--out" => out = next_val(&mut it, "--out")?,
             "--base-prefix" => base = next_val(&mut it, "--base-prefix")?,
+            "--cta-link" => cta_raw = next_val(&mut it, "--cta-link")?,
+            "--phlog-link" => phlog_raw = next_val(&mut it, "--phlog-link")?,
             "--keep" => {
                 keep = next_val(&mut it, "--keep")?
                     .parse()
@@ -65,9 +74,23 @@ fn run_build(flags: &[String]) -> std::io::Result<()> {
         }
     }
 
+    // Assemble the hub list (label, host, port), skipping any disabled link.
+    let cta = parse_gopher_link(&cta_raw).map_err(std::io::Error::other)?;
+    let phlog = parse_gopher_link(&phlog_raw).map_err(std::io::Error::other)?;
+    let mut hubs: Vec<site::Hub> = Vec::new();
+    if let Some((h, p)) = &cta {
+        hubs.push(("Live CTA trains (gopher-cta)", h, *p));
+    }
+    if let Some((h, p)) = &phlog {
+        hubs.push(("Phlog -- the blog (gopher-blog)", h, *p));
+    }
+
     let now = CivilTime::from_unix(unix_now());
     let cosmic = cosmic::compute(now);
-    let cfg = site::SiteConfig { base: &base };
+    let cfg = site::SiteConfig {
+        base: &base,
+        hubs: &hubs,
+    };
     let files = site::build_tree(&cfg, &cosmic);
 
     let snap = gopher_core::publish(Path::new(&out), &files, keep)?;
@@ -85,6 +108,31 @@ fn next_val<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> std::i
     it.next()
         .cloned()
         .ok_or_else(|| std::io::Error::other(format!("{flag} expects a value")))
+}
+
+/// Parse a hub link `gopher://host[:port]` into `(host, port)` (default port 70),
+/// or `None` for `none`/empty. Mirrors gopher-cta's `parse_phlog_link`.
+fn parse_gopher_link(raw: &str) -> Result<Option<(String, u16)>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    let rest = raw
+        .strip_prefix("gopher://")
+        .ok_or_else(|| format!("hub link must start with gopher:// (got {raw})"))?;
+    let rest = rest.trim_end_matches('/');
+    let (host, port) = match rest.split_once(':') {
+        Some((h, p)) => (
+            h,
+            p.parse::<u16>()
+                .map_err(|_| format!("bad port in hub link: {p}"))?,
+        ),
+        None => (rest, 70),
+    };
+    if host.is_empty() {
+        return Err(format!("hub link has no host: {raw}"));
+    }
+    Ok(Some((host.to_string(), port)))
 }
 
 /// The dcgi entry: geomyidae calls `gopher-askthedeck draw $search $arguments

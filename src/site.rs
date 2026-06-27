@@ -17,11 +17,19 @@ use crate::meanings::meaning;
 use crate::{frame, reading};
 use gopher_core::{info, link, render_menu_index, Entry, ItemKind};
 
-/// Build config: where in the selector namespace this hole lives.
+/// A hub cross-link to a sibling gopher hole: `(label, host, port)`. Emitted as
+/// a type-1 link carrying a concrete host/port, so the client dials the sibling
+/// directly — this hole never proxies. This is the hub topology cta/blog use.
+pub type Hub<'a> = (&'a str, &'a str, u16);
+
+/// Build config: where in the selector namespace this hole lives, and the hub
+/// cross-links to advertise.
 pub struct SiteConfig<'a> {
     /// Selector base prefix, e.g. "" (own root) or "/tarot" (shared docroot).
     /// No trailing slash.
     pub base: &'a str,
+    /// Hub cross-links to sibling holes (cta, blog, …).
+    pub hubs: &'a [Hub<'a>],
 }
 
 /// A built tree file: relative path + bytes. (Same shape as `gopher_core::TreeFile`.)
@@ -61,7 +69,7 @@ fn sel(cfg: &SiteConfig, path: &str) -> String {
 }
 
 fn root_menu(cfg: &SiteConfig) -> String {
-    let entries = vec![
+    let mut entries = vec![
         info("=============================================================="),
         info("                 A S K   T H E   D E C K"),
         info("        a three-card tarot reading, drawn live over gopher"),
@@ -88,10 +96,25 @@ fn root_menu(cfg: &SiteConfig) -> String {
             "Server capabilities (caps.txt)",
             sel(cfg, "caps.txt"),
         ),
-        info(""),
-        info("  No accounts, no cookies, no tracking. Pick the item, the"),
-        info("  deck shuffles, and nothing about you reaches the reading."),
     ];
+
+    // Hub cross-links to the sibling holes (cta on :70, blog on :7071). Each
+    // carries a concrete host/port so the client dials the sibling directly.
+    if !cfg.hubs.is_empty() {
+        entries.push(info(""));
+        entries.push(info("  Elsewhere in this gopherhole:"));
+        for (label, host, port) in cfg.hubs {
+            entries.push(link(ItemKind::Menu, *label, "/").with_host(*host, *port));
+        }
+    }
+
+    entries.push(info(""));
+    entries.push(info(
+        "  No accounts, no cookies, no tracking. Pick the item, the",
+    ));
+    entries.push(info(
+        "  deck shuffles, and nothing about you reaches the reading.",
+    ));
     render_menu_index(&entries)
 }
 
@@ -295,7 +318,10 @@ mod tests {
     }
 
     fn cfg() -> SiteConfig<'static> {
-        SiteConfig { base: "" }
+        SiteConfig {
+            base: "",
+            hubs: &[],
+        }
     }
 
     #[test]
@@ -327,10 +353,29 @@ mod tests {
 
     #[test]
     fn base_prefix_is_applied_to_selectors() {
-        let c = SiteConfig { base: "/tarot" };
+        let c = SiteConfig {
+            base: "/tarot",
+            hubs: &[],
+        };
         let gph = root_menu(&c);
         assert!(gph.contains("|/tarot/draw.dcgi|"));
         assert!(gph.contains("|/tarot/about.txt|"));
+    }
+
+    #[test]
+    fn hub_links_carry_concrete_host_and_port() {
+        let c = SiteConfig {
+            base: "",
+            hubs: &[
+                ("Live CTA trains", "gopher.debene.dev", 70),
+                ("Phlog -- the blog", "gopher.debene.dev", 7071),
+            ],
+        };
+        let gph = root_menu(&c);
+        assert!(gph.contains("[1|Live CTA trains|/|gopher.debene.dev|70]"));
+        assert!(gph.contains("[1|Phlog -- the blog|/|gopher.debene.dev|7071]"));
+        // and the local items still use placeholder tokens
+        assert!(gph.contains("[1|Draw three cards|/draw.dcgi|server|port]"));
     }
 
     #[test]

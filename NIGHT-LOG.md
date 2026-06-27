@@ -2,6 +2,15 @@
 
 Reverse-chronological build notes.
 
+## 2026-06-27 — joined the hub (cross-links to cta + blog)
+
+Hub topology (cta `:70` is the front door; blog `:7071` and now deck `:7072` each
+cross-link to/from it). Added `SiteConfig.hubs` (a list of `(label, host, port)`)
+rendered in the root menu as type-1 links carrying concrete host/port via
+`Entry::with_host`, so the client dials the sibling directly. Wired
+`--cta-link` / `--phlog-link` (defaults `gopher://gopher.debene.dev:70` / `:7071`;
+`none` disables). The reciprocal link (cta → deck) is added in the gopher-cta repo.
+
 ## 2026-06-27 — draw is a shuffle (type-1), not a typed question
 
 Feedback: being asked to "type a question" was confusing once the prompt went
