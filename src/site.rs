@@ -45,13 +45,19 @@ pub fn build_tree(cfg: &SiteConfig, cosmic: &Cosmic) -> Vec<File> {
     files
 }
 
-/// Selector for a path under this hole's base prefix.
-fn sel(cfg: &SiteConfig, path: &str) -> String {
-    if cfg.base.is_empty() {
+/// Selector for `path` under a base prefix (`""` → own root, `"/tarot"` →
+/// shared docroot). Shared with the dcgi layer so static and dynamic links agree.
+pub fn selector(base: &str, path: &str) -> String {
+    if base.is_empty() {
         format!("/{path}")
     } else {
-        format!("{}/{path}", cfg.base.trim_end_matches('/'))
+        format!("{}/{path}", base.trim_end_matches('/'))
     }
+}
+
+/// Selector for a path under this hole's base prefix.
+fn sel(cfg: &SiteConfig, path: &str) -> String {
+    selector(cfg.base, path)
 }
 
 fn root_menu(cfg: &SiteConfig) -> String {

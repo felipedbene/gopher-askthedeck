@@ -7,6 +7,7 @@
 //! geomyidae or the network; the core is deterministic and clock-free.
 
 pub mod cosmic;
+pub mod dcgi;
 pub mod deck;
 pub mod frame;
 pub mod meanings;

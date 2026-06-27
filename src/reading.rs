@@ -333,6 +333,41 @@ mod tests {
         assert!(r.contains("Sagittarius"));
     }
 
+    /// RELEASE GATE (the ethical invariant). The assembled LLM prompt must carry
+    /// the question, the cards, and the cosmic context -- and NONE of the client
+    /// metadata a dcgi can see. `build_prompt` doesn't even take those as inputs,
+    /// so this is structurally guaranteed; the test pins it against any future
+    /// accidental plumbing and is wired as a CI gate.
+    #[test]
+    fn prompt_never_contains_client_metadata() {
+        let q = "what should I focus on this week?";
+        let spread = draw(seed_hash(q));
+        let p = build_prompt(q, &spread, &sky());
+
+        // Sentinel values a dcgi could observe but the prompt must never carry.
+        let forbidden = [
+            "203.0.113.77",        // client IP
+            "client.evil.example", // client hostname
+            "61234",               // client port
+            "/tarot/draw.dcgi",    // selector path
+            "Lynx/2.8.9",          // user-agent
+            "Chicago, Illinois",   // geolocation
+        ];
+        for f in forbidden {
+            assert!(!p.contains(f), "prompt leaked client metadata: {f}");
+        }
+        // No locating timestamp (date / year / weekday / clock / zone).
+        for t in ["2026", "June", "27,", "Saturday", "12:00", "UTC", "GMT"] {
+            assert!(!p.contains(t), "prompt leaked a locating timestamp: {t}");
+        }
+        // ...while the legitimate inputs ARE present.
+        assert!(p.contains(q));
+        assert!(p.contains("Zodiac Season"));
+        for d in &spread {
+            assert!(p.contains(d.card.name));
+        }
+    }
+
     #[test]
     fn build_prompt_has_question_cards_and_cosmic() {
         let spread = draw(seed_hash("a question"));

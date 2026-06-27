@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gopher_askthedeck::cosmic::{self, CivilTime};
-use gopher_askthedeck::{deck, site};
+use gopher_askthedeck::{dcgi, site};
 
 const DEFAULT_OUT: &str = "public";
 const DEFAULT_KEEP: usize = 3;
@@ -31,12 +31,7 @@ fn main() -> ExitCode {
             }
         },
         Some("draw") => {
-            // Placeholder until slice 5 wires the dcgi argv/stdout.
-            let seed = deck::seed_hash("placeholder");
-            for (pos, drawn) in deck::POSITIONS.iter().zip(deck::draw(seed).iter()) {
-                let rev = if drawn.reversed { " (reversed)" } else { "" };
-                println!("{pos}: {}{rev}", drawn.card.name);
-            }
+            run_draw(&args[2..]);
             ExitCode::SUCCESS
         }
         _ => {
@@ -85,6 +80,17 @@ fn next_val<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> std::i
     it.next()
         .cloned()
         .ok_or_else(|| std::io::Error::other(format!("{flag} expects a value")))
+}
+
+/// The dcgi entry: geomyidae calls `gopher-askthedeck draw $search $arguments
+/// $host $port $traversal $selector`. We parse argv, read the clock, and print a
+/// gophermap. The base prefix comes from the dcgi's own selector, falling back
+/// to $ATD_BASE.
+fn run_draw(rest: &[String]) {
+    let args = dcgi::DcgiArgs::from_argv(rest);
+    let env_base = std::env::var("ATD_BASE").unwrap_or_default();
+    let base = dcgi::base_prefix(&args.selector, &env_base);
+    print!("{}", dcgi::render(&args, &base, unix_now()));
 }
 
 /// Current Unix time in seconds (UTC). The single clock read in the build path.
