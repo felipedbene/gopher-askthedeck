@@ -1,0 +1,20 @@
+# gitleaks config: default rules + a DeepSeek-key rule. Used by the pre-commit
+# hook and the CI `secrets` job (the non-skippable backstop).
+
+[extend]
+useDefault = true # keep gitleaks' built-in provider rules
+
+# A DeepSeek API key assigned to the env var (sk-... style). Belt-and-suspenders
+# over the generic-api-key rule.
+[[rules]]
+id = "deepseek-api-key"
+description = "DeepSeek API key"
+regex = '''(?i)(DEEPSEEK_API_KEY\s*[=:]\s*['"]?sk-[a-z0-9]{16,}['"]?|\bsk-[a-zA-Z0-9]{20,}\b)'''
+keywords = ["deepseek_api_key", "sk-"]
+
+[allowlist]
+description = "Placeholders and non-secret samples (not real keys)"
+regexes = [
+  '''sk-\.\.\.''',        # README/compose placeholder
+  '''sk-xxx+''',          # docs placeholder
+]

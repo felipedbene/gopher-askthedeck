@@ -1,0 +1,43 @@
+# gopher-askthedeck on the RackNerd VPS, alongside gopher-cta (:70) and
+# gopher-blog (:7071) as an independent hole on :7072. Its own container and
+# geomyidae, so enabling the dcgi here cannot affect the sibling holes.
+#
+# Watchtower (already running for the siblings, label-enabled) swaps the image
+# when CI pushes a new digest — the container recreate IS the publish.
+#
+# Secrets: put the real key in a gitignored deploy/.env next to this file:
+#   DEEPSEEK_API_KEY=sk-...
+# Never commit it. With no key, the hole still serves the deterministic reading.
+
+services:
+  gopher-askthedeck:
+    image: ghcr.io/felipedbene/gopher-askthedeck:latest
+    container_name: gopher-askthedeck
+    restart: unless-stopped
+    ports:
+      - "7072:7072"
+    environment:
+      # The DeepSeek key (from deploy/.env). Inherited by the dcgi process.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Cost/abuse knobs (defaults shown; tune without rebuilding).
+      ATD_DAILY_CAP: ${ATD_DAILY_CAP:-500}
+      ATD_RATE_CAPACITY: ${ATD_RATE_CAPACITY:-5}
+      ATD_RATE_REFILL: ${ATD_RATE_REFILL:-0.05}
+      ATD_LLM_TIMEOUT: ${ATD_LLM_TIMEOUT:-12}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Persist cache + rate-limit + daily cap across restarts.
+      - atd-state:/var/cache/atd
+    labels:
+      # Opt into the existing Watchtower instance's label scope.
+      com.centurylinklabs.watchtower.enable: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  atd-state:

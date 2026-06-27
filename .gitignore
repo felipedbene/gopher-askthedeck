@@ -3,4 +3,5 @@
 /public
 Cargo.lock
 .env
+deploy/.env
 *.mmdb

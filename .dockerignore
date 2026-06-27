@@ -1,0 +1,6 @@
+/target
+/public
+/dist
+.git
+.env
+*.mmdb
