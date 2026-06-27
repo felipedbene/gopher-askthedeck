@@ -220,21 +220,21 @@ fn throttle_entries(base: &str) -> Vec<Entry> {
     ]
 }
 
-/// The empty-question prompt: explain, and offer the type-7 item again.
+/// The empty-input prompt: explain, and offer the type-7 item again.
 fn prompt_entries(base: &str) -> Vec<Entry> {
     vec![
         info("=============================================================="),
-        info("  ASK THE DECK"),
+        info("  DRAW THREE CARDS"),
         info("=============================================================="),
         info(""),
-        info("  You didn't type a question. That's the whole interaction:"),
-        info("  pick \"Ask the deck\" and type what's on your mind -- a"),
-        info("  question, a worry, a single word. The deck answers in three"),
-        info("  cards read against the sky overhead right now."),
+        info("  You didn't type anything. Pick \"Draw three cards\" and type"),
+        info("  a word, an intention, a worry -- anything: it shuffles the"),
+        info("  deck and seeds your draw. Three cards are then read in their"),
+        info("  positions against the sky overhead right now."),
         info(""),
         link(
             ItemKind::Search,
-            "Ask the deck  (type your question)",
+            "Draw three cards",
             selector(base, "draw.dcgi"),
         ),
         info(""),
@@ -268,7 +268,7 @@ fn reading_entries(body: &str, spread: &[DrawnCard; 3], base: &str) -> Vec<Entry
     }
     entries.push(link(
         ItemKind::Search,
-        "Ask the deck again",
+        "Draw three more cards",
         selector(base, "draw.dcgi"),
     ));
     entries.push(link(
@@ -328,10 +328,10 @@ mod tests {
     #[test]
     fn empty_query_renders_a_prompt() {
         let out = render(&args_with(""), "", NOW);
-        assert!(out.contains("ASK THE DECK"));
+        assert!(out.contains("DRAW THREE CARDS"));
         assert!(out.to_lowercase().contains("type"));
-        // a type-7 item to ask
-        assert!(out.contains("[7|Ask the deck  (type your question)|/draw.dcgi|server|port]"));
+        // a type-7 item to draw
+        assert!(out.contains("[7|Draw three cards|/draw.dcgi|server|port]"));
         // no reading content
         assert!(!out.contains("YOUR READING"));
     }
@@ -344,7 +344,7 @@ mod tests {
         // three card frames present
         assert_eq!(out.matches(".------------------------------.").count(), 6);
         // real navigation links appended
-        assert!(out.contains("[7|Ask the deck again|/draw.dcgi|server|port]"));
+        assert!(out.contains("[7|Draw three more cards|/draw.dcgi|server|port]"));
         assert!(out.contains("[1|Browse all 78 cards|/cards/|server|port]"));
     }
 

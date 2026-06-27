@@ -70,11 +70,7 @@ fn root_menu(cfg: &SiteConfig) -> String {
         info("  Three cards: Current State, Focus for Growth, Potential in"),
         info("  7 Days -- each read against the real sky overhead right now."),
         info(""),
-        link(
-            ItemKind::Search,
-            "Ask the deck  (type your question)",
-            sel(cfg, "draw.dcgi"),
-        ),
+        link(ItemKind::Search, "Draw three cards", sel(cfg, "draw.dcgi")),
         info(""),
         link(
             ItemKind::Text,
@@ -93,8 +89,8 @@ fn root_menu(cfg: &SiteConfig) -> String {
             sel(cfg, "caps.txt"),
         ),
         info(""),
-        info("  No accounts, no cookies, no tracking. Your question seeds the"),
-        info("  draw and nothing about you ever reaches the reading."),
+        info("  No accounts, no cookies, no tracking. What you type only"),
+        info("  shuffles the draw; nothing about you reaches the reading."),
     ];
     render_menu_index(&entries)
 }
@@ -151,7 +147,7 @@ fn card_page(card: &Card) -> String {
     s.push_str(&format!("  Reversed  {reversed}\n\n"));
     s.push_str("--------------------------------------------------------------\n");
     s.push_str("  Browse the deck:  selector /cards/\n");
-    s.push_str("  Ask the deck:     the root menu's \"Ask the deck\" item\n");
+    s.push_str("  Draw three cards: the root menu's \"Draw three cards\" item\n");
     s
 }
 
@@ -171,11 +167,12 @@ fn about_page() -> String {
   ABOUT -- ASK THE DECK
 ==============================================================
 
-  A three-card tarot reading, drawn the moment you ask and
-  read against the real sky overhead. What you type shuffles the
-  deck -- it seeds your draw -- and the three cards are read in
-  their positions. The reading interprets the cards and the sky,
-  not your words.
+  A three-card tarot reading, drawn live and read against the
+  real sky overhead. Pick \"Draw three cards\" and type anything
+  -- a word, an intention, a worry: it shuffles the deck and
+  seeds your draw. The three cards are then read in their
+  positions. The reading interprets the cards and the sky, not
+  your words.
 
   THE SPREAD
 
@@ -233,8 +230,8 @@ fn cosmic_page(c: &Cosmic) -> String {
   day a minor accent.
 
 --------------------------------------------------------------
-  Ask the deck:  the root menu's \"Ask the deck\" item
-  Browse cards:  selector /cards/
+  Draw three cards:  the root menu's \"Draw three cards\" item
+  Browse cards:      selector /cards/
 ",
         line = c.human_line(),
         phase = c.moon_phase,
@@ -314,7 +311,7 @@ mod tests {
     fn root_menu_has_type_7_search_item() {
         let gph = root_menu(&cfg());
         assert!(
-            gph.contains("[7|Ask the deck  (type your question)|/draw.dcgi|server|port]"),
+            gph.contains("[7|Draw three cards|/draw.dcgi|server|port]"),
             "root must carry the type-7 draw item:\n{gph}"
         );
     }
