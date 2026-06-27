@@ -1,0 +1,6 @@
+/target
+/dist
+/public
+Cargo.lock
+.env
+*.mmdb

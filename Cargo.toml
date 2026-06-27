@@ -1,0 +1,37 @@
+[package]
+name = "gopher-askthedeck"
+version = "0.1.0"
+edition = "2021"
+description = "An interactive tarot reading (3-card spread + real astrological context) served over Gopher (RFC 1436) by geomyidae. A per-request dcgi draw with a static deck-browsing tree."
+license = "MIT"
+
+[lib]
+name = "gopher_askthedeck"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gopher-askthedeck"
+path = "src/main.rs"
+
+[features]
+default = ["net"]
+# The DeepSeek HTTPS call. Off => the binary is pure/offline (build + the
+# deterministic local reading) and needs no TLS stack. The whole app works,
+# and the test suite is green, with this feature disabled.
+net = ["dep:ureq"]
+
+[dependencies]
+# The shared gopher spine (menu model, .gph serializer, atomic publish). Pinned
+# by tag so the image build resolves it with only this repo checked out, and so
+# we bump core on our own schedule.
+gopher-core = { git = "https://github.com/felipedbene/gopher-core", tag = "v0.1.0" }
+# Minimal blocking HTTPS for the DeepSeek call. A dcgi is a short-lived process
+# invoked per request, so a blocking client with no async runtime is the right
+# shape (no tokio). rustls-backed; note ring has no big-endian support, so this
+# is the amd64 path (G5/ppc64 is a deferred seam — see README).
+ureq = { version = "2", optional = true, default-features = false, features = ["tls", "json"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
