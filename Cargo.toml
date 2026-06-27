@@ -24,7 +24,7 @@ net = ["dep:ureq"]
 # The shared gopher spine (menu model, .gph serializer, atomic publish). Pinned
 # by tag so the image build resolves it with only this repo checked out, and so
 # we bump core on our own schedule.
-gopher-core = { git = "https://github.com/felipedbene/gopher-core", tag = "v0.1.0" }
+gopher-core = { git = "https://github.com/felipedbene/gopher-core", tag = "v0.2.0" }
 # Minimal blocking HTTPS for the DeepSeek call. A dcgi is a short-lived process
 # invoked per request, so a blocking client with no async runtime is the right
 # shape (no tokio). rustls-backed; note ring has no big-endian support, so this
