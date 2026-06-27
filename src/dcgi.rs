@@ -185,7 +185,9 @@ fn produce(
 ) -> String {
     if let Some(llm) = llm {
         if ratelimit::try_acquire_call(ctx.state_dir, window, ctx.limits.daily_call_cap) {
-            let prompt = build_prompt(q, spread, sky);
+            // Standardized prompt: cards + cosmic only. The typed `q` shuffled
+            // the draw but is deliberately NOT passed to the LLM.
+            let prompt = build_prompt(spread, sky);
             if let Some(text) = llm(&prompt) {
                 return render_llm_reading(q, spread, sky, &text);
             }

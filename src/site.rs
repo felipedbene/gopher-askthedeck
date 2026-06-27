@@ -172,8 +172,10 @@ fn about_page() -> String {
 ==============================================================
 
   A three-card tarot reading, drawn the moment you ask and
-  read against the real sky overhead. You type a question; the
-  deck answers in three positions.
+  read against the real sky overhead. What you type shuffles the
+  deck -- it seeds your draw -- and the three cards are read in
+  their positions. The reading interprets the cards and the sky,
+  not your words.
 
   THE SPREAD
 
@@ -191,12 +193,14 @@ fn about_page() -> String {
 
   A gopher server can see more about a visitor than a reading
   has any right to use. So we don't. The interpretation is built
-  from exactly three things: your question, the three cards you
-  drew, and the sky. Your IP, hostname, port, the path you came
-  in on, your client software, your location, and the wall-clock
-  time are NEVER part of the reading -- not shown to it, not
-  hinted at, not laundered in. This is enforced by a test that
-  fails the build if any of them could reach the interpreter.
+  from exactly two things: the three cards you drew and the sky.
+  The prompt is a fixed template -- not even the text you typed
+  reaches it (that only shuffles the deck). Your IP, hostname,
+  port, the path you came in on, your client software, your
+  location, and the wall-clock time are NEVER part of the reading
+  -- not shown to it, not hinted at, not laundered in. This is
+  enforced by a test that fails the build if any of them could
+  reach the interpreter.
 
   No accounts. No cookies. No saved history. No tracking. The
   reading is the reading.

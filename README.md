@@ -38,16 +38,21 @@ the baked tree and execs `draw.dcgi` per request.
 
 ## The ethical invariant
 
-The reading is built from **exactly three things**: your question, the three
-cards you drew, and the sky. The assembled LLM prompt MUST NOT contain — directly
-or laundered — the client **IP, hostname, port, selector path, user-agent,
-geolocation, or a locating wall-clock timestamp**. This is structural:
-`reading::build_prompt` only takes `(question, spread, cosmic)`, and the cosmic
-block deliberately omits the calendar date (the moon phase + season already carry
-the temporal context) and reports the *planet* (Saturn), never the weekday
-(Saturday). A release-gate test (`prompt_never_contains_client_metadata`) fails
-the build if any sentinel metadata could appear. The client IP is used only for
-rate limiting, hashed at the edge, never logged in clear, never near the LLM.
+The LLM prompt is a **fixed, standardized template** — exactly like the askthedeck
+web app, whose `buildPrompt` takes only the cards and the astrology. Its sole
+variable fields are the three `Position: Card` lines and the cosmic block. What
+you type only **shuffles the draw** (it seeds the deterministic deal and is the
+cache key); it is **never** placed in the prompt, so there is no open-ended user
+field — no prompt-injection surface, and nothing of yours to leak. The prompt
+also MUST NOT contain — directly or laundered — the client **IP, hostname, port,
+selector path, user-agent, geolocation, or a locating wall-clock timestamp**.
+This is structural: `reading::build_prompt` only takes `(spread, cosmic)`, and the
+cosmic block omits the calendar date (the moon phase + season already carry the
+temporal context) and reports the *planet* (Saturn), never the weekday (Saturday).
+A release-gate test (`prompt_is_standardized_and_leaks_nothing`) fails the build
+if the typed text or any sentinel metadata could appear. The client IP is used
+only for rate limiting, hashed at the edge, never logged in clear, never near the
+LLM.
 
 No accounts, no cookies, no saved history, no tracking.
 

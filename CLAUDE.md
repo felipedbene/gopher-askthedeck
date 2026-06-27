@@ -5,13 +5,16 @@ context, served by geomyidae. Sibling to gopher-cta and gopher-blog.
 
 ## The non-negotiables
 
-1. **The ethical invariant is a release gate.** The assembled LLM prompt may
-   contain only the question, the cards, and the cosmic block — never the client
-   IP, hostname, port, selector, user-agent, geolocation, or a locating
-   timestamp. `reading::build_prompt` takes only `(question, spread, cosmic)`;
-   keep it that way. `cosmic::Cosmic::prompt_block` must stay date-free. The test
-   `reading::tests::prompt_never_contains_client_metadata` enforces this — if you
-   change prompt assembly, that test must stay green.
+1. **The standardized-prompt + ethical invariant is a release gate.** The LLM
+   prompt is a FIXED template (like askthedeck's `buildPrompt`): its only
+   variable fields are the `Position: Card` lines and the cosmic block. The
+   seeker's typed text only SEEDS THE DRAW — it must never enter the prompt (no
+   open-ended field, no injection surface). `reading::build_prompt` takes only
+   `(spread, cosmic)`; keep it that way. The prompt must also never carry client
+   IP/hostname/port/selector/user-agent/geo or a locating timestamp, and
+   `cosmic::Cosmic::prompt_block` must stay date-free. The test
+   `reading::tests::prompt_is_standardized_and_leaks_nothing` enforces all of
+   this — if you touch prompt assembly, it must stay green.
 
 2. **The app must always answer.** No key, no network, or over the daily cap →
    the deterministic `reading::local_reading`. The whole suite is green with
