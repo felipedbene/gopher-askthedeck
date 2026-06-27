@@ -70,7 +70,7 @@ fn root_menu(cfg: &SiteConfig) -> String {
         info("  Three cards: Current State, Focus for Growth, Potential in"),
         info("  7 Days -- each read against the real sky overhead right now."),
         info(""),
-        link(ItemKind::Search, "Draw three cards", sel(cfg, "draw.dcgi")),
+        link(ItemKind::Menu, "Draw three cards", sel(cfg, "draw.dcgi")),
         info(""),
         link(
             ItemKind::Text,
@@ -89,8 +89,8 @@ fn root_menu(cfg: &SiteConfig) -> String {
             sel(cfg, "caps.txt"),
         ),
         info(""),
-        info("  No accounts, no cookies, no tracking. What you type only"),
-        info("  shuffles the draw; nothing about you reaches the reading."),
+        info("  No accounts, no cookies, no tracking. Pick the item, the"),
+        info("  deck shuffles, and nothing about you reaches the reading."),
     ];
     render_menu_index(&entries)
 }
@@ -168,11 +168,10 @@ fn about_page() -> String {
 ==============================================================
 
   A three-card tarot reading, drawn live and read against the
-  real sky overhead. Pick \"Draw three cards\" and type anything
-  -- a word, an intention, a worry: it shuffles the deck and
-  seeds your draw. The three cards are then read in their
-  positions. The reading interprets the cards and the sky, not
-  your words.
+  real sky overhead. Pick \"Draw three cards\" and the deck
+  shuffles and deals three -- no question to type. Each card is
+  read in its position; the reading interprets the cards and the
+  sky.
 
   THE SPREAD
 
@@ -316,12 +315,14 @@ mod tests {
     }
 
     #[test]
-    fn root_menu_has_type_7_search_item() {
+    fn root_menu_has_type_1_draw_item() {
         let gph = root_menu(&cfg());
+        // a plain type-1 link (no input box) — the draw is a shuffle, not a query
         assert!(
-            gph.contains("[7|Draw three cards|/draw.dcgi|server|port]"),
-            "root must carry the type-7 draw item:\n{gph}"
+            gph.contains("[1|Draw three cards|/draw.dcgi|server|port]"),
+            "root must carry the type-1 draw item:\n{gph}"
         );
+        assert!(!gph.contains("[7|"), "no type-7 search item");
     }
 
     #[test]

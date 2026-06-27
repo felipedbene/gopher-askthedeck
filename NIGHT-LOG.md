@@ -2,6 +2,25 @@
 
 Reverse-chronological build notes.
 
+## 2026-06-27 — draw is a shuffle (type-1), not a typed question
+
+Feedback: being asked to "type a question" was confusing once the prompt went
+static — the web app has no question box; you tap to draw. Fixed it to match:
+
+- The entry is now a plain **type-1** menu link ("Draw three cards") and
+  "Draw three more cards" footer. Selecting it just fetches `draw.dcgi` with no
+  input box. Removed the type-7 search item and the empty-input prompt page.
+- The draw is a **random shuffle** seeded by server-clock entropy
+  (`Ctx::entropy`, nanos ^ pid at the IO edge), like the web's `Math.random`
+  shuffle. No typed text anywhere in the flow.
+- Since there's no typed text to echo, the live reading body == the shared
+  snapshot (header always rendered with `None`); one render, no divergence.
+- The cache + permalink key stays content-addressed on cards+day, so identical
+  random draws still collapse to one cached reading + one permalink.
+- `ItemKind::Search` is now unused (kept the gopher-core v0.2.0 pin anyway).
+- Tests reworked: `render(base, seed, now)`; handle tests seed via `Ctx::entropy`
+  (two entropies where two distinct draws are needed). 63 green (net + no-net).
+
 ## 2026-06-27 — slice 8: shareable permalinks (+ prompt standardization, relabel)
 
 Three follow-ups after the initial build, all live:

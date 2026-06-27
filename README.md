@@ -1,10 +1,10 @@
 # gopher-askthedeck
 
 A three-card tarot reading, drawn live and served over **Gopher** (RFC 1436) by
-geomyidae. You select a type-7 "Ask the deck" item, type your question, and the
-deck answers in three positions — each read against the **real sky** overhead
-right now (moon phase, moon sign, zodiac season, planetary day, computed from the
-server clock). A gopher port of [askthedeck](https://github.com/felipedbene/askthedeck),
+geomyidae. You select "Draw three cards" — a plain menu item, no question to type
+— the deck shuffles, and the spread is read in three positions, each against the
+**real sky** overhead right now (moon phase, moon sign, zodiac season, planetary
+day, computed from the server clock). A gopher port of [askthedeck](https://github.com/felipedbene/askthedeck),
 sibling to [gopher-cta](https://github.com/felipedbene/gopher-cta) and
 [gopher-blog](https://github.com/felipedbene/gopher-blog).
 
@@ -22,15 +22,15 @@ build (one-shot)  ── writes the static tree:
                        index.gph, about.txt, caps.txt, cosmic.txt,
                        cards/index.gph, cards/<slug>.txt   (78 ASCII frames + meanings)
 
-draw.dcgi (per request, run by geomyidae on the type-7 item)
-   1. question arrives as argv[1] (the type-7 search term)
-   2. seed = hash(question + UTC day)          ← also the cache key
-   3. rate-limit (per client-IP hash) → cache → daily cap
-   4. draw 3 distinct cards (+ reversal) deterministically from the seed
-   5. compute the cosmic context from the server clock
-   6. DeepSeek (timeout) ── slow / down / over cap ──► deterministic local reading
-   7. render: ASCII frames + narrative + links to each card's static page
-   8. cache the result
+draw.dcgi (per request, run by geomyidae on a plain type-1 menu link)
+   1. rate-limit (per client-IP hash); over-limit → polite text item
+   2. shuffle: draw 3 distinct cards (+ reversal) from server-clock entropy
+   3. id = hash(cards + UTC day)               ← cache key AND share permalink id
+   4. compute the cosmic context from the server clock
+   5. cache hit? → return it (zero LLM calls)
+   6. else DeepSeek (timeout) ── slow / down / over cap ──► deterministic local
+   7. render: ASCII frames + narrative + a share permalink + card links
+   8. cache the core; persist the shareable snapshot at /r/<id>.txt
 ```
 
 There is no long-running daemon of our own and no fetch loop — geomyidae serves
@@ -94,13 +94,14 @@ you typed, so a permalink never exposes it. Snapshots are pruned after 30 days
 cargo run -- build --out public
 lynx gopher://127.0.0.1:70/        # (after pointing a daemon at public/current)
 
-# Try a reading on the command line (the dcgi calling convention):
+# Draw a reading on the command line (the dcgi calling convention; the draw is
+# a shuffle, so the search arg is ignored):
 #   draw  $search  $arguments  $host  $port  $traversal  $selector
-cargo run -- draw "should I take the new job?"
+cargo run -- draw "" "" gopher.debene.dev 7072 0 /draw.dcgi
 
 # With a key (optional — offline works without it):
 echo 'DEEPSEEK_API_KEY=sk-...' > .env
-cargo run -- draw "what should I focus on?"
+cargo run -- draw "" "" gopher.debene.dev 7072 0 /draw.dcgi
 
 cargo test --all                          # core + IO + the prompt-guard gate
 cargo test --all --no-default-features    # the same suite with no TLS stack

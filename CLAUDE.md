@@ -47,10 +47,13 @@ context, served by geomyidae. Sibling to gopher-cta and gopher-blog.
 ## geomyidae facts (verified against the man page / CGI.md)
 
 - A dcgi is called `script $search $arguments $host $port $traversal $selector`.
-  The type-7 question is **argv[1] (search)**. `$host/$port` are the *server's*.
+  The draw is a **shuffle**, so the menu item is a plain **type-1** link and
+  `$search`/`$arguments` are empty/ignored; the spread is seeded from
+  server-clock entropy. `$host/$port` are the *server's* (used only for the share
+  permalink). When the menu item was type-7 it forced a confusing "type a
+  question" box — don't go back to that.
 - `.dcgi` stdout is interpreted as a gophermap (`.gph`); `.cgi` is raw. We emit a
-  gophermap (`gopher-core::render_menu_index`), which is how a client renders a
-  type-7 response.
+  gophermap (`gopher-core::render_menu_index`).
 - CGI is activated by the `.cgi`/`.dcgi` extension + exec bit; there is **no
   daemon-wide enable flag**, so it can't change how a static tree is served.
 - The client IP is in `$REMOTE_ADDR`; `$QUERY_STRING`/`$SELECTOR`/`$TRAVERSAL`
@@ -67,13 +70,15 @@ cargo clippy --all-targets -- -D warnings
 cargo clippy --no-default-features --all-targets -- -D warnings
 cargo fmt --all --check
 cargo run -- build --out public
-cargo run -- draw "a question"
+cargo run -- draw "" "" gopher.debene.dev 7072 0 /draw.dcgi   # a shuffle draw
 ```
 
 ## Dependencies
 
-- `gopher-core` (tag) — menu model + `.gph` serializer + atomic publish. Needs
-  **v0.2.0** for `ItemKind::Search` (type 7). Bump the tag deliberately.
+- `gopher-core` (tag, **v0.2.0**) — menu model + `.gph` serializer + atomic
+  publish. (v0.2.0 added `ItemKind::Search`/type-7, which we no longer use now
+  that the draw is a type-1 link; v0.1.0 would also work, but the pin is fine.)
+  Bump the tag deliberately.
 - `ureq` + `serde_json` (only under the `net` feature) — the DeepSeek call.
 - `dotenvy` — load a gitignored `.env` in dev.
 

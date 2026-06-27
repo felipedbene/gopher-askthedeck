@@ -1,21 +1,19 @@
 //! The dynamic `draw.dcgi` entry point — the only non-static surface.
 //!
-//! geomyidae executes a dcgi as `script $search $arguments $host $port
-//! $traversal $selector` and interprets its stdout as a gophermap (`.gph`).
-//! So the seeker's question arrives as **argv[1] (the type-7 search term)**,
-//! and we emit a gophermap, which is exactly how a gopher client renders the
-//! response to a type-7 selection.
+//! Like the askthedeck web app, a reading is a **shuffle**, not a typed question:
+//! the menu item is a plain type-1 link, so selecting it just fetches
+//! `draw.dcgi` (no input box) and the deck deals three random cards. geomyidae
+//! executes the dcgi as `script $search $arguments $host $port $traversal
+//! $selector` and interprets its stdout as a gophermap (`.gph`); we ignore the
+//! (empty) search/arguments and emit the reading as a gophermap.
 //!
-//! IO boundary: argv comes in, a gophermap string goes out. The clock read is
-//! injected ([`render`] takes `now_unix`) so the whole thing is testable without
-//! a process or a wall clock. The DeepSeek call, cache, cap, and rate limit are
-//! layered in front of this in slice 6; here the reading is always the
-//! deterministic offline one.
+//! IO boundary: argv + injected clock/entropy come in, a gophermap goes out, so
+//! the whole thing is testable without a process or a wall clock. The shuffle is
+//! seeded by [`Ctx::entropy`] (a high-resolution clock read at the IO edge).
 //!
 //! Ethical invariant: argv carries the client/server host and port and the
-//! selector. None of them are ever passed to the reading. We use the host/port
-//! not at all (geomyidae substitutes the `server`/`port` link tokens itself) and
-//! the selector only to discover our own base prefix for navigation links.
+//! selector. The server host/port appear only in the share permalink (display
+//! only); none of argv reaches the reading interpretation or the LLM.
 
 use std::path::Path;
 
@@ -28,12 +26,13 @@ use gopher_core::{info, link, render_menu_index, Entry, ItemKind};
 /// The arguments geomyidae hands a dcgi, in its documented order.
 #[derive(Debug, Clone, Default)]
 pub struct DcgiArgs {
-    /// argv[1] — the type-7 search term (the seeker's question).
+    /// argv[1] — the type-7 search term. Unused: the draw is a shuffle, not a
+    /// query (kept so the struct mirrors the real calling convention).
     pub search: String,
-    /// argv[2] — query string after `?` in the selector.
+    /// argv[2] — query string after `?` in the selector. Unused (see `search`).
     pub arguments: String,
-    /// argv[3] / argv[4] — server host/port. Deliberately unused (see module
-    /// note); kept only so the struct mirrors the real calling convention.
+    /// argv[3] / argv[4] — the SERVER's host/port. Used only to build the share
+    /// permalink (display); never reaches the reading or the LLM.
     pub host: String,
     pub port: String,
     /// argv[6] — the full request selector, used only to find our base prefix.
@@ -79,26 +78,21 @@ pub fn base_prefix(selector: &str, env_base: &str) -> String {
     env_base.trim_end_matches('/').to_string()
 }
 
-/// The coarse time window used for the seed (and, in slice 6, the cache key):
-/// the UTC calendar date. Identical questions on the same UTC day draw the same
-/// spread — mirrors askthedeck's same-day cache.
+/// The coarse time window folded into the reading id / cache key: the UTC
+/// calendar date. Mirrors askthedeck's same-day, card-keyed cache.
 fn time_window(now_unix: i64) -> String {
     let t = CivilTime::from_unix(now_unix);
     format!("{:04}-{:02}-{:02}", t.year, t.month, t.day)
 }
 
-/// Render the full dcgi response (a gophermap string) for the given args and
-/// clock. Pure: no IO. `base` is the selector prefix for navigation links.
-pub fn render(args: &DcgiArgs, base: &str, now_unix: i64) -> String {
-    let q = args.question();
-    if q.is_empty() {
-        return render_menu_index(&prompt_entries(base));
-    }
-
-    let seed = deck::seed_hash(&format!("{q}__{}", time_window(now_unix)));
+/// Render a reading (a gophermap string) from a draw `seed`, with no cost
+/// controls and no persistence. Pure: no IO. `base` is the selector prefix for
+/// navigation links. Like the web app, the draw is a shuffle — there is no typed
+/// question — so the seed is supplied by the caller (entropy at the IO edge).
+pub fn render(base: &str, seed: u64, now_unix: i64) -> String {
     let spread = deck::draw(seed);
     let sky = cosmic::compute(CivilTime::from_unix(now_unix));
-    let body = reading::local_reading(Some(q), &spread, &sky);
+    let body = reading::local_reading(None, &spread, &sky);
 
     // The no-controls path persists nothing, so it offers no share permalink.
     render_menu_index(&reading_entries(&body, &spread, base, None))
@@ -112,6 +106,7 @@ pub fn render(args: &DcgiArgs, base: &str, now_unix: i64) -> String {
 pub type Llm<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 /// Abuse + cost limits.
+#[derive(Clone, Copy)]
 pub struct Limits {
     /// Max LLM calls per UTC day before everything falls back to local.
     pub daily_call_cap: u32,
@@ -130,6 +125,10 @@ pub struct Ctx<'a> {
     /// Hash of the client IP (hashed at the IO edge; the raw IP never arrives).
     pub ip_hash: u64,
     pub now_unix: i64,
+    /// Per-request entropy that seeds the shuffle (the draw is random, like the
+    /// web's tap-to-draw — there is no typed question). Supplied at the IO edge
+    /// from a high-resolution clock; a fixed value in tests makes draws reproducible.
+    pub entropy: u64,
     pub base: &'a str,
     pub limits: Limits,
 }
@@ -153,11 +152,6 @@ fn reading_key(spread: &[DrawnCard; 3], now_unix: i64) -> String {
 /// injected so the cost/abuse logic is testable without a network. Order:
 /// rate-limit -> cache -> daily cap -> LLM (or local) -> cache + persist share.
 pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
-    let q = args.question();
-    if q.is_empty() {
-        return render_menu_index(&prompt_entries(ctx.base));
-    }
-
     // Per-IP throttle first — cheapest rejection, and it guards the LLM path.
     if !ratelimit::allow(
         ctx.state_dir,
@@ -169,13 +163,12 @@ pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
         return render_menu_index(&throttle_entries(ctx.base));
     }
 
-    let seed = deck::seed_hash(&format!("{q}__{}", time_window(ctx.now_unix)));
-    let spread = deck::draw(seed);
+    // The draw is a random shuffle (no typed question, like the web app).
+    let spread = deck::draw(ctx.entropy);
     let sky = cosmic::compute(CivilTime::from_unix(ctx.now_unix));
     let id = reading_key(&spread, ctx.now_unix);
 
-    // Cache the header-free CORE (keyed by cards+day), so it serves both the
-    // display copy and the shareable copy. Cache hit => zero LLM calls.
+    // Cache the reading CORE keyed by cards+day. Cache hit => zero LLM calls.
     let core = if let Some(cached) = cache::get(ctx.state_dir, &id, ctx.now_unix) {
         cached
     } else {
@@ -184,18 +177,15 @@ pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
         c
     };
 
-    // Persist the shareable snapshot — header WITHOUT the typed text, so the
-    // permalink never exposes what anyone typed.
-    let shared = format!("{}{}", reading::render_header(None, &sky), core);
-    let _ = share::store(ctx.share_dir, &id, &shared);
+    // The reading body == the shareable snapshot: there is no typed text to
+    // echo, so the live view and the persisted permalink are identical.
+    let body = format!("{}{}", reading::render_header(None, &sky), core);
+    let _ = share::store(ctx.share_dir, &id, &body);
     let share_selector = selector(ctx.base, &format!("r/{id}.txt"));
     let permalink = share::permalink(&args.host, &args.port, &share_selector);
 
-    // The live response: header WITH the shuffle echo + the same core + nav +
-    // the share permalink.
-    let display = format!("{}{}", reading::render_header(Some(q), &sky), core);
     render_menu_index(&reading_entries(
-        &display,
+        &body,
         &spread,
         ctx.base,
         Some((&share_selector, &permalink)),
@@ -248,37 +238,6 @@ fn throttle_entries(base: &str) -> Vec<Entry> {
     ]
 }
 
-/// The empty-input prompt: explain, and offer the type-7 item again.
-fn prompt_entries(base: &str) -> Vec<Entry> {
-    vec![
-        info("=============================================================="),
-        info("  DRAW THREE CARDS"),
-        info("=============================================================="),
-        info(""),
-        info("  You didn't type anything. Pick \"Draw three cards\" and type"),
-        info("  a word, an intention, a worry -- anything: it shuffles the"),
-        info("  deck and seeds your draw. Three cards are then read in their"),
-        info("  positions against the sky overhead right now."),
-        info(""),
-        link(
-            ItemKind::Search,
-            "Draw three cards",
-            selector(base, "draw.dcgi"),
-        ),
-        info(""),
-        link(
-            ItemKind::Menu,
-            "Browse the 78 cards instead",
-            selector(base, "cards/"),
-        ),
-        link(
-            ItemKind::Text,
-            "About this deck",
-            selector(base, "about.txt"),
-        ),
-    ]
-}
-
 /// Wrap the reading body (multi-line text) as gophermap info lines, then append
 /// the share permalink (if any) and real navigation links to each drawn card's
 /// page, drawing again, and browsing. `share` is `(selector, permalink)` for the
@@ -312,7 +271,7 @@ fn reading_entries(
         ));
     }
     entries.push(link(
-        ItemKind::Search,
+        ItemKind::Menu,
         "Draw three more cards",
         selector(base, "draw.dcgi"),
     ));
@@ -370,34 +329,27 @@ mod tests {
         assert_eq!(a.question(), "from-args");
     }
 
-    #[test]
-    fn empty_query_renders_a_prompt() {
-        let out = render(&args_with(""), "", NOW);
-        assert!(out.contains("DRAW THREE CARDS"));
-        assert!(out.to_lowercase().contains("type"));
-        // a type-7 item to draw
-        assert!(out.contains("[7|Draw three cards|/draw.dcgi|server|port]"));
-        // no reading content
-        assert!(!out.contains("YOUR READING"));
-    }
+    const SEED: u64 = 0x5151_5151_2323_2323;
 
     #[test]
-    fn non_empty_query_renders_a_reading() {
-        let out = render(&args_with("should I move cities?"), "", NOW);
+    fn renders_a_reading_with_type1_nav() {
+        let out = render("", SEED, NOW);
         assert!(out.contains("YOUR READING"));
-        assert!(out.contains("should I move cities?"));
+        // there is no typed question to echo
+        assert!(!out.contains("shuffled the deck with"));
         // three card frames present
         assert_eq!(out.matches(".------------------------------.").count(), 6);
-        // real navigation links appended
-        assert!(out.contains("[7|Draw three more cards|/draw.dcgi|server|port]"));
+        // the draw/redraw items are plain type-1 links (no input box)
+        assert!(out.contains("[1|Draw three more cards|/draw.dcgi|server|port]"));
         assert!(out.contains("[1|Browse all 78 cards|/cards/|server|port]"));
+        // and no type-7 search item anywhere
+        assert!(!out.contains("[7|"));
     }
 
     #[test]
     fn output_is_a_valid_gophermap_no_tabs() {
-        let out = render(&args_with("anything at all"), "", NOW);
+        let out = render("", SEED, NOW);
         assert!(!out.contains('\t'), "gophermap lines must not contain tabs");
-        // every non-empty line is either an info line or a [..] link line
         for line in out.lines() {
             if line.starts_with('[') {
                 assert!(line.ends_with(']'), "malformed link line: {line}");
@@ -406,15 +358,18 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_for_same_question_and_day() {
-        let a = render(&args_with("steady?"), "", NOW);
-        let b = render(&args_with("steady?"), "", NOW);
-        assert_eq!(a, b);
+    fn deterministic_for_same_seed() {
+        assert_eq!(render("", SEED, NOW), render("", SEED, NOW));
+    }
+
+    #[test]
+    fn different_seeds_usually_differ() {
+        assert_ne!(render("", 1, NOW), render("", 999_999, NOW));
     }
 
     #[test]
     fn base_prefix_is_applied_to_links() {
-        let out = render(&args_with("hi"), "/tarot", NOW);
+        let out = render("/tarot", SEED, NOW);
         assert!(out.contains("|/tarot/draw.dcgi|"));
         assert!(out.contains("|/tarot/cards/"));
     }
@@ -444,12 +399,13 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(state: &'a Path, share: &'a Path, limits: Limits) -> Ctx<'a> {
+    fn ctx<'a>(state: &'a Path, share: &'a Path, entropy: u64, limits: Limits) -> Ctx<'a> {
         Ctx {
             state_dir: state,
             share_dir: share,
             ip_hash: 12345,
             now_unix: NOW,
+            entropy,
             base: "",
             limits,
         }
@@ -463,12 +419,13 @@ mod tests {
             calls.fetch_add(1, Ordering::SeqCst);
             Some("## A Reading\n\nThe model speaks plainly here.".to_string())
         };
-        let a = args_with("same question");
-        let c = ctx(&s, &sh, loose_limits());
+        let a = args_with("");
+        let c = ctx(&s, &sh, SEED, loose_limits());
 
+        // same ctx => same entropy => same draw => second is a cache hit
         let first = handle(&a, &c, Some(&llm));
         let second = handle(&a, &c, Some(&llm));
-        assert_eq!(first, second, "same seed -> identical output");
+        assert_eq!(first, second, "same draw -> identical output");
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,
@@ -483,18 +440,17 @@ mod tests {
     #[test]
     fn falls_back_to_local_when_llm_unavailable() {
         let (s, sh) = dirs("fallback");
-        let c = ctx(&s, &sh, loose_limits());
-        let out = handle(&args_with("guidance please"), &c, None);
+        let c = ctx(&s, &sh, SEED, loose_limits());
+        let out = handle(&args_with(""), &c, None);
         assert!(out.contains("YOUR READING"), "deterministic local reading");
-        assert!(out.contains("guidance please"));
     }
 
     #[test]
     fn falls_back_to_local_when_llm_errors() {
         let (s, sh) = dirs("llmerr");
         let llm = |_p: &str| -> Option<String> { None }; // simulates timeout/down
-        let c = ctx(&s, &sh, loose_limits());
-        let out = handle(&args_with("anything"), &c, Some(&llm));
+        let c = ctx(&s, &sh, SEED, loose_limits());
+        let out = handle(&args_with(""), &c, Some(&llm));
         assert!(out.contains("YOUR READING"));
     }
 
@@ -511,12 +467,15 @@ mod tests {
             rate_capacity: 100.0,
             rate_refill_per_sec: 1.0,
         };
-        let c = ctx(&s, &sh, limits);
-        // first distinct question: uses the one cap slot -> LLM
-        let a = handle(&args_with("q-one"), &c, Some(&llm));
+        // Two different draws (distinct entropy) so they don't collapse to one
+        // cached reading and each takes the produce path.
+        let c1 = ctx(&s, &sh, 1, limits);
+        let c2 = ctx(&s, &sh, 2, limits);
+        // first draw: uses the one cap slot -> LLM
+        let a = handle(&args_with(""), &c1, Some(&llm));
         assert!(a.contains("model text"));
-        // second distinct question: cap exhausted -> local
-        let b = handle(&args_with("q-two"), &c, Some(&llm));
+        // second, different draw: cap exhausted -> local
+        let b = handle(&args_with(""), &c2, Some(&llm));
         assert!(b.contains("YOUR READING"));
         assert!(!b.contains("model text"));
         assert_eq!(calls.load(Ordering::SeqCst), 1, "only one paid call");
@@ -530,11 +489,11 @@ mod tests {
             rate_capacity: 2.0,
             rate_refill_per_sec: 0.001, // effectively no refill in-test
         };
-        let c = ctx(&s, &sh, limits);
-        // distinct questions so cache never absorbs the hit
-        assert!(handle(&args_with("a"), &c, None).contains("YOUR READING"));
-        assert!(handle(&args_with("b"), &c, None).contains("YOUR READING"));
-        let third = handle(&args_with("c"), &c, None);
+        let c = ctx(&s, &sh, SEED, limits);
+        // the rate check runs before cache, so a burst is throttled regardless
+        assert!(handle(&args_with(""), &c, None).contains("YOUR READING"));
+        assert!(handle(&args_with(""), &c, None).contains("YOUR READING"));
+        let third = handle(&args_with(""), &c, None);
         assert!(
             third.contains("EASY THERE"),
             "burst beyond capacity is throttled"
@@ -545,44 +504,51 @@ mod tests {
     fn share_snapshot_is_persisted_without_the_typed_text() {
         let (s, sh) = dirs("share");
         let a = DcgiArgs {
-            search: "a private worry".into(),
             host: "gopher.debene.dev".into(),
             port: "7072".into(),
             ..Default::default()
         };
-        let c = ctx(&s, &sh, loose_limits());
+        let c = ctx(&s, &sh, SEED, loose_limits());
         let out = handle(&a, &c, None);
 
-        // the live response shows the typed text + a permalink
-        assert!(out.contains("a private worry"));
+        // the live response carries a permalink built from the server host/port
         assert!(out.contains("gopher://gopher.debene.dev:7072/0/r/"));
 
-        // exactly one snapshot was written, and it does NOT contain the text
+        // exactly one snapshot was written; it's a valid reading
         let files: Vec<_> = std::fs::read_dir(&sh).unwrap().flatten().collect();
         assert_eq!(files.len(), 1, "one shared snapshot persisted");
         let body = std::fs::read_to_string(files[0].path()).unwrap();
         assert!(body.contains("YOUR READING"));
-        assert!(
-            !body.contains("a private worry"),
-            "permalink must not leak typed text"
-        );
+        // the snapshot equals the live body minus the appended gophermap nav
         assert!(!body.contains("shuffled the deck with"));
     }
 
     #[test]
-    fn host_port_selector_never_reach_the_reading() {
-        // Even when geomyidae hands us a host/port/selector, the rendered
-        // reading body must not contain them.
+    fn argv_selector_never_reaches_the_reading() {
+        // geomyidae hands us the raw selector (with any query); it must not
+        // appear in the reading. (Server host/port legitimately appear only in
+        // the permalink.)
+        let (s, sh) = dirs("argvleak");
         let a = DcgiArgs {
-            search: "what now?".into(),
-            host: "client-9.example".into(),
-            port: "54321".into(),
-            selector: "/draw.dcgi?secret".into(),
+            host: "gopher.debene.dev".into(),
+            port: "7072".into(),
+            selector: "/draw.dcgi?super-secret".into(),
             ..Default::default()
         };
-        let out = render(&a, "", NOW);
-        assert!(!out.contains("client-9.example"));
-        assert!(!out.contains("54321"));
-        assert!(!out.contains("secret"));
+        let c = ctx(&s, &sh, SEED, loose_limits());
+        let out = handle(&a, &c, None);
+        assert!(!out.contains("super-secret"));
+    }
+
+    #[test]
+    fn no_controls_render_is_self_contained() {
+        // The no-controls render path takes no argv and emits no permalink, so
+        // it carries only host/port placeholder tokens, never a concrete address.
+        let out = render("", SEED, NOW);
+        assert!(out.contains("YOUR READING"));
+        assert!(
+            out.contains("|server|port]"),
+            "links use placeholder tokens"
+        );
     }
 }

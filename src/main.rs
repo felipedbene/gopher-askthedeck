@@ -114,6 +114,7 @@ fn run_draw(rest: &[String]) {
         share_dir: &share_dir,
         ip_hash,
         now_unix: unix_now(),
+        entropy: draw_entropy(),
         base: &base,
         limits: dcgi::Limits {
             daily_call_cap: env_u32("ATD_DAILY_CAP", 500),
@@ -163,4 +164,14 @@ fn unix_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Per-request entropy that seeds the shuffle: high-resolution clock mixed with
+/// the pid, so each draw is fresh (the draw is random, like the web's tap-to-draw).
+fn draw_entropy() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    nanos ^ (std::process::id() as u64).rotate_left(32)
 }
