@@ -2,6 +2,28 @@
 
 Reverse-chronological build notes.
 
+## 2026-06-27 — slice 8: shareable permalinks (+ prompt standardization, relabel)
+
+Three follow-ups after the initial build, all live:
+
+- **Standardized the LLM prompt.** The web askthedeck has no free-text question
+  — `buildPrompt` is a fixed template (cards + astrology). This port had added an
+  open-ended `THE SEEKER'S QUESTION` field (unfaithful + a prompt-injection
+  surface). Now `build_prompt(spread, cosmic)` is fixed; the typed text only
+  seeds the draw and never reaches the LLM. Guard test strengthened to assert an
+  injection-y typed string never appears in the prompt.
+- **Relabelled** the entry from "Ask the deck (type your question)" to
+  "Draw three cards" — the text shuffles the draw, it isn't a question answered.
+- **Shareable permalinks (saving via bookmarks).** Every reading is persisted as
+  a plain-text snapshot at `/r/<id>.txt` (served straight from the docroot via a
+  writable `atd-shared` volume), with a copyable `gopher://` permalink printed in
+  the reading. id = content hash of cards + UTC day (NOT the typed text), so it
+  doubles as the cache key and identical draws collapse to one link — matching
+  askthedeck's card-keyed cache. The cache now stores the header-free reading
+  *core*; display prepends a header with the typed echo, the stored snapshot
+  prepends one without it (so a link never leaks what someone typed). 30-day
+  mtime GC. Deliberately NO cookie/account history — bookmarks are the history.
+
 ## 2026-06-27 — initial build, slices 1–7
 
 Ported askthedeck into Gopherspace as `gopher-askthedeck`: a mostly-static deck

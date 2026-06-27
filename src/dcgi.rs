@@ -21,9 +21,8 @@ use std::path::Path;
 
 use crate::cosmic::{self, CivilTime, Cosmic};
 use crate::deck::{self, DrawnCard};
-use crate::reading::{build_prompt, local_reading, render_llm_reading};
 use crate::site::selector;
-use crate::{cache, ratelimit};
+use crate::{cache, ratelimit, reading, share};
 use gopher_core::{info, link, render_menu_index, Entry, ItemKind};
 
 /// The arguments geomyidae hands a dcgi, in its documented order.
@@ -99,9 +98,10 @@ pub fn render(args: &DcgiArgs, base: &str, now_unix: i64) -> String {
     let seed = deck::seed_hash(&format!("{q}__{}", time_window(now_unix)));
     let spread = deck::draw(seed);
     let sky = cosmic::compute(CivilTime::from_unix(now_unix));
-    let body = local_reading(q, &spread, &sky);
+    let body = reading::local_reading(Some(q), &spread, &sky);
 
-    render_menu_index(&reading_entries(&body, &spread, base))
+    // The no-controls path persists nothing, so it offers no share permalink.
+    render_menu_index(&reading_entries(&body, &spread, base, None))
 }
 
 // ---- the orchestrated path (cache + cap + rate limit + LLM) ----------------
@@ -121,10 +121,12 @@ pub struct Limits {
     pub rate_refill_per_sec: f64,
 }
 
-/// Per-request context for [`handle`]. All IO is rooted at `state_dir`.
+/// Per-request context for [`handle`]. All IO is rooted at these dirs.
 pub struct Ctx<'a> {
     /// Writable dir for the cache, rate-limit buckets, and the daily counter.
     pub state_dir: &'a Path,
+    /// Writable dir for shareable reading snapshots (served at `/r/<id>.txt`).
+    pub share_dir: &'a Path,
     /// Hash of the client IP (hashed at the IO edge; the raw IP never arrives).
     pub ip_hash: u64,
     pub now_unix: i64,
@@ -132,10 +134,24 @@ pub struct Ctx<'a> {
     pub limits: Limits,
 }
 
+/// Content-addressed id for a reading: the cards (sorted, with orientation) and
+/// the UTC day — NOT the typed text. Identical draws collapse to one permalink,
+/// matching askthedeck's card-keyed cache. Used as both the cache key and the
+/// share-file name.
+fn reading_key(spread: &[DrawnCard; 3], now_unix: i64) -> String {
+    let mut parts: Vec<String> = spread
+        .iter()
+        .map(|d| format!("{}:{}", d.card.id, d.reversed as u8))
+        .collect();
+    parts.sort();
+    let material = format!("{}__{}", parts.join(","), time_window(now_unix));
+    format!("{:016x}", deck::seed_hash(&material))
+}
+
 /// The full dynamic path with all controls. `llm` is the (optional) reading
 /// generator: `Some(f)` when a key is configured, `None` for pure offline. It's
 /// injected so the cost/abuse logic is testable without a network. Order:
-/// rate-limit -> cache -> daily cap -> LLM (or local) -> cache.
+/// rate-limit -> cache -> daily cap -> LLM (or local) -> cache + persist share.
 pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
     let q = args.question();
     if q.is_empty() {
@@ -153,47 +169,59 @@ pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
         return render_menu_index(&throttle_entries(ctx.base));
     }
 
-    let window = time_window(ctx.now_unix);
-    let seed = deck::seed_hash(&format!("{q}__{window}"));
+    let seed = deck::seed_hash(&format!("{q}__{}", time_window(ctx.now_unix)));
     let spread = deck::draw(seed);
     let sky = cosmic::compute(CivilTime::from_unix(ctx.now_unix));
-    let key = format!("{seed:016x}");
+    let id = reading_key(&spread, ctx.now_unix);
 
-    // Cache hit => zero LLM calls.
-    let body = if let Some(cached) = cache::get(ctx.state_dir, &key, ctx.now_unix) {
+    // Cache the header-free CORE (keyed by cards+day), so it serves both the
+    // display copy and the shareable copy. Cache hit => zero LLM calls.
+    let core = if let Some(cached) = cache::get(ctx.state_dir, &id, ctx.now_unix) {
         cached
     } else {
-        let body = produce(q, &spread, &sky, ctx, &window, llm);
-        let _ = cache::put(ctx.state_dir, &key, ctx.now_unix, &body);
-        body
+        let c = produce_core(&spread, &sky, ctx, llm);
+        let _ = cache::put(ctx.state_dir, &id, ctx.now_unix, &c);
+        c
     };
 
-    render_menu_index(&reading_entries(&body, &spread, ctx.base))
+    // Persist the shareable snapshot — header WITHOUT the typed text, so the
+    // permalink never exposes what anyone typed.
+    let shared = format!("{}{}", reading::render_header(None, &sky), core);
+    let _ = share::store(ctx.share_dir, &id, &shared);
+    let share_selector = selector(ctx.base, &format!("r/{id}.txt"));
+    let permalink = share::permalink(&args.host, &args.port, &share_selector);
+
+    // The live response: header WITH the shuffle echo + the same core + nav +
+    // the share permalink.
+    let display = format!("{}{}", reading::render_header(Some(q), &sky), core);
+    render_menu_index(&reading_entries(
+        &display,
+        &spread,
+        ctx.base,
+        Some((&share_selector, &permalink)),
+    ))
 }
 
-/// Produce a fresh reading: try the LLM (if available and under the day's cap),
-/// else the deterministic local reading. Reserving the cap slot before the call
-/// means a transient outage degrades to local for the day rather than hammering
-/// a paid, failing API.
-fn produce(
-    q: &str,
-    spread: &[DrawnCard; 3],
-    sky: &Cosmic,
-    ctx: &Ctx,
-    window: &str,
-    llm: Option<Llm>,
-) -> String {
+/// Produce a fresh reading CORE (header-free): the LLM core if a generator is
+/// available and under the day's cap, else the deterministic local core.
+/// Reserving the cap slot before the call means a transient outage degrades to
+/// local for the day rather than hammering a paid, failing API.
+fn produce_core(spread: &[DrawnCard; 3], sky: &Cosmic, ctx: &Ctx, llm: Option<Llm>) -> String {
     if let Some(llm) = llm {
-        if ratelimit::try_acquire_call(ctx.state_dir, window, ctx.limits.daily_call_cap) {
-            // Standardized prompt: cards + cosmic only. The typed `q` shuffled
-            // the draw but is deliberately NOT passed to the LLM.
-            let prompt = build_prompt(spread, sky);
+        if ratelimit::try_acquire_call(
+            ctx.state_dir,
+            &time_window(ctx.now_unix),
+            ctx.limits.daily_call_cap,
+        ) {
+            // Standardized prompt: cards + cosmic only (the typed text shuffled
+            // the draw but is never passed to the LLM).
+            let prompt = reading::build_prompt(spread, sky);
             if let Some(text) = llm(&prompt) {
-                return render_llm_reading(q, spread, sky, &text);
+                return reading::llm_core(spread, sky, &text);
             }
         }
     }
-    local_reading(q, spread, sky)
+    reading::local_core(spread, sky)
 }
 
 /// The polite over-rate response — a text item, not an error.
@@ -252,13 +280,30 @@ fn prompt_entries(base: &str) -> Vec<Entry> {
 }
 
 /// Wrap the reading body (multi-line text) as gophermap info lines, then append
-/// real navigation links to each drawn card's page, asking again, and browsing.
-fn reading_entries(body: &str, spread: &[DrawnCard; 3], base: &str) -> Vec<Entry> {
+/// the share permalink (if any) and real navigation links to each drawn card's
+/// page, drawing again, and browsing. `share` is `(selector, permalink)` for the
+/// persisted snapshot, or `None` on the no-controls path.
+fn reading_entries(
+    body: &str,
+    spread: &[DrawnCard; 3],
+    base: &str,
+    share: Option<(&str, &str)>,
+) -> Vec<Entry> {
     let mut entries: Vec<Entry> = body.lines().map(info).collect();
     entries.push(info(""));
     entries.push(info(
         "--------------------------------------------------------------",
     ));
+    if let Some((share_sel, permalink)) = share {
+        entries.push(info("  Share this reading -- bookmark it to keep it:"));
+        entries.push(info(format!("  {permalink}")));
+        entries.push(link(
+            ItemKind::Text,
+            "Open this reading's permalink",
+            share_sel,
+        ));
+        entries.push(info(""));
+    }
     for d in spread {
         entries.push(link(
             ItemKind::Text,
@@ -383,10 +428,12 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn state_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("atd-handle-test-{name}"));
-        let _ = std::fs::remove_dir_all(&d);
-        d
+    /// A fresh (state_dir, share_dir) pair — they must differ, since both name
+    /// files `<id>.txt` keyed by the same reading id.
+    fn dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("atd-handle-test-{name}"));
+        let _ = std::fs::remove_dir_all(&base);
+        (base.join("state"), base.join("share"))
     }
 
     fn loose_limits() -> Limits {
@@ -397,9 +444,10 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(dir: &'a Path, limits: Limits) -> Ctx<'a> {
+    fn ctx<'a>(state: &'a Path, share: &'a Path, limits: Limits) -> Ctx<'a> {
         Ctx {
-            state_dir: dir,
+            state_dir: state,
+            share_dir: share,
             ip_hash: 12345,
             now_unix: NOW,
             base: "",
@@ -409,14 +457,14 @@ mod tests {
 
     #[test]
     fn cache_hit_does_not_call_the_llm() {
-        let d = state_dir("cache");
+        let (s, sh) = dirs("cache");
         let calls = AtomicUsize::new(0);
         let llm = |_p: &str| -> Option<String> {
             calls.fetch_add(1, Ordering::SeqCst);
             Some("## A Reading\n\nThe model speaks plainly here.".to_string())
         };
         let a = args_with("same question");
-        let c = ctx(&d, loose_limits());
+        let c = ctx(&s, &sh, loose_limits());
 
         let first = handle(&a, &c, Some(&llm));
         let second = handle(&a, &c, Some(&llm));
@@ -427,12 +475,15 @@ mod tests {
             "second hit served from cache"
         );
         assert!(first.contains("The model speaks plainly here."));
+        // the reading offers a share permalink
+        assert!(first.contains("Share this reading"));
+        assert!(first.contains("/r/"));
     }
 
     #[test]
     fn falls_back_to_local_when_llm_unavailable() {
-        let d = state_dir("fallback");
-        let c = ctx(&d, loose_limits());
+        let (s, sh) = dirs("fallback");
+        let c = ctx(&s, &sh, loose_limits());
         let out = handle(&args_with("guidance please"), &c, None);
         assert!(out.contains("YOUR READING"), "deterministic local reading");
         assert!(out.contains("guidance please"));
@@ -440,16 +491,16 @@ mod tests {
 
     #[test]
     fn falls_back_to_local_when_llm_errors() {
-        let d = state_dir("llmerr");
+        let (s, sh) = dirs("llmerr");
         let llm = |_p: &str| -> Option<String> { None }; // simulates timeout/down
-        let c = ctx(&d, loose_limits());
+        let c = ctx(&s, &sh, loose_limits());
         let out = handle(&args_with("anything"), &c, Some(&llm));
         assert!(out.contains("YOUR READING"));
     }
 
     #[test]
     fn over_daily_cap_falls_back_to_local() {
-        let d = state_dir("cap");
+        let (s, sh) = dirs("cap");
         let calls = AtomicUsize::new(0);
         let llm = |_p: &str| -> Option<String> {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -460,7 +511,7 @@ mod tests {
             rate_capacity: 100.0,
             rate_refill_per_sec: 1.0,
         };
-        let c = ctx(&d, limits);
+        let c = ctx(&s, &sh, limits);
         // first distinct question: uses the one cap slot -> LLM
         let a = handle(&args_with("q-one"), &c, Some(&llm));
         assert!(a.contains("model text"));
@@ -473,13 +524,13 @@ mod tests {
 
     #[test]
     fn rate_limit_throttles_a_burst_from_one_ip() {
-        let d = state_dir("rl");
+        let (s, sh) = dirs("rl");
         let limits = Limits {
             daily_call_cap: 1000,
             rate_capacity: 2.0,
             rate_refill_per_sec: 0.001, // effectively no refill in-test
         };
-        let c = ctx(&d, limits);
+        let c = ctx(&s, &sh, limits);
         // distinct questions so cache never absorbs the hit
         assert!(handle(&args_with("a"), &c, None).contains("YOUR READING"));
         assert!(handle(&args_with("b"), &c, None).contains("YOUR READING"));
@@ -488,6 +539,34 @@ mod tests {
             third.contains("EASY THERE"),
             "burst beyond capacity is throttled"
         );
+    }
+
+    #[test]
+    fn share_snapshot_is_persisted_without_the_typed_text() {
+        let (s, sh) = dirs("share");
+        let a = DcgiArgs {
+            search: "a private worry".into(),
+            host: "gopher.debene.dev".into(),
+            port: "7072".into(),
+            ..Default::default()
+        };
+        let c = ctx(&s, &sh, loose_limits());
+        let out = handle(&a, &c, None);
+
+        // the live response shows the typed text + a permalink
+        assert!(out.contains("a private worry"));
+        assert!(out.contains("gopher://gopher.debene.dev:7072/0/r/"));
+
+        // exactly one snapshot was written, and it does NOT contain the text
+        let files: Vec<_> = std::fs::read_dir(&sh).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1, "one shared snapshot persisted");
+        let body = std::fs::read_to_string(files[0].path()).unwrap();
+        assert!(body.contains("YOUR READING"));
+        assert!(
+            !body.contains("a private worry"),
+            "permalink must not leak typed text"
+        );
+        assert!(!body.contains("shuffled the deck with"));
     }
 
     #[test]

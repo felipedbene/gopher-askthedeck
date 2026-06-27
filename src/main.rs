@@ -103,9 +103,15 @@ fn run_draw(rest: &[String]) {
     let state_dir = std::env::var("ATD_STATE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir().join("gopher-askthedeck"));
+    // Shareable snapshots live in the docroot (served at /r/<id>.txt). Must
+    // differ from state_dir (both name files <id>.txt).
+    let share_dir = std::env::var("ATD_SHARE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| state_dir.join("r"));
 
     let ctx = dcgi::Ctx {
         state_dir: &state_dir,
+        share_dir: &share_dir,
         ip_hash,
         now_unix: unix_now(),
         base: &base,

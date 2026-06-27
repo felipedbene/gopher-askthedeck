@@ -202,6 +202,14 @@ fn about_page() -> String {
   No accounts. No cookies. No saved history. No tracking. The
   reading is the reading.
 
+  SHARING + SAVING
+
+  Every reading gets a permalink (gopher://.../0/r/<id>.txt)
+  printed at the bottom. Bookmark it in your client to keep a
+  reading, or pass it to someone else. The stored copy omits the
+  text you typed, so a link never reveals it. There are no
+  server-side profiles -- your bookmarks are your history.
+
 --------------------------------------------------------------
   Browse all 78 cards:  selector /cards/
   Cosmic weather:       selector /cosmic.txt

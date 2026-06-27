@@ -25,7 +25,15 @@ context, served by geomyidae. Sibling to gopher-cta and gopher-blog.
    per-IP rate limit. The client IP is hashed at the edge and never logged in
    clear or passed toward the LLM.
 
-4. **Never log the question text.** It's the seeker's private intent.
+4. **Never log the question text.** It's the seeker's private intent. The same
+   reason the shareable snapshot (`share::store`) is rendered with
+   `render_header(None, ..)` — a permalink must never expose what someone typed.
+
+5. **Saving = bookmarks, not accounts.** Sharing is a content-addressed
+   permalink at `/r/<id>.txt` (id = cards + UTC day, not the typed text). Do NOT
+   add cookies/accounts/server-side per-person history — it contradicts the
+   no-tracking ethic. The cache stores the header-free reading *core* keyed by
+   the same id; the display copy and the shared copy both prepend a header to it.
 
 ## Shape
 

@@ -16,4 +16,5 @@ pub mod frame;
 pub mod meanings;
 pub mod ratelimit;
 pub mod reading;
+pub mod share;
 pub mod site;

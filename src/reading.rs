@@ -199,23 +199,25 @@ fn render_section(position: &str, d: &DrawnCard, narrative: &str) -> String {
     s
 }
 
-/// The reading header: the typed text echoed back as what shuffled the draw
-/// (NOT a question the reading answers — the reading reads the cards), plus the
-/// cosmic weather. This is display text for the seeker; it never reaches the LLM.
-pub fn render_header(question: &str, cosmic: &Cosmic) -> String {
+/// The reading header. `typed` is the seeker's text echoed back as what shuffled
+/// the draw (NOT a question the reading answers); `None` omits it entirely, which
+/// is how the shareable/persisted copy is rendered so a permalink never exposes
+/// what someone typed. Display text for the seeker; never reaches the LLM.
+pub fn render_header(typed: Option<&str>, cosmic: &Cosmic) -> String {
+    let shuffle = match typed {
+        Some(t) => format!("  You shuffled the deck with:\n    \"{t}\"\n\n"),
+        None => String::new(),
+    };
     format!(
         "\
 ==============================================================
   ASK THE DECK -- YOUR READING
 ==============================================================
 
-  You shuffled the deck with:
-    \"{q}\"
-
-  The sky right now: {phase} in {moon}, {sun} Season, {day}'s day.
+{shuffle}  The sky right now: {phase} in {moon}, {sun} Season, {day}'s day.
 
 ",
-        q = question,
+        shuffle = shuffle,
         phase = cosmic.moon_phase,
         moon = cosmic.moon_sign,
         sun = cosmic.sun_sign,
@@ -223,11 +225,11 @@ pub fn render_header(question: &str, cosmic: &Cosmic) -> String {
     )
 }
 
-/// The deterministic offline reading: a complete, well-formed gopher text page
-/// (header + three framed sections + a through-line), with no key and no
-/// network. Same (question, spread, cosmic) always yields the same text.
-pub fn local_reading(question: &str, spread: &[DrawnCard; 3], cosmic: &Cosmic) -> String {
-    let mut s = render_header(question, cosmic);
+/// The deterministic offline reading CORE (no header): three framed sections +
+/// a through-line. Header-free so it can be cached once and rendered with or
+/// without the typed-text echo. Deterministic in (spread, cosmic).
+pub fn local_core(spread: &[DrawnCard; 3], cosmic: &Cosmic) -> String {
+    let mut s = String::new();
     for (i, (d, pos)) in spread.iter().zip(POSITIONS.iter()).enumerate() {
         let narrative = local_narrative(i, d, cosmic);
         s.push_str(&render_section(pos, d, &narrative));
@@ -247,18 +249,10 @@ pub fn local_reading(question: &str, spread: &[DrawnCard; 3], cosmic: &Cosmic) -
     s
 }
 
-/// Render a reading whose narrative came from the LLM: the same header and
-/// framed cards as the offline reading, followed by the model's prose (markdown
-/// lightly flattened to plain gopher text and wrapped). The LLM's own `##`
-/// per-card headers carry the structure.
-pub fn render_llm_reading(
-    question: &str,
-    spread: &[DrawnCard; 3],
-    cosmic: &Cosmic,
-    prose: &str,
-) -> String {
-    let mut s = render_header(question, cosmic);
-    s.push_str("  YOUR THREE CARDS\n\n");
+/// The LLM reading CORE (no header): the three framed cards, then the model's
+/// prose (markdown lightly flattened to plain gopher text). Header-free, as above.
+pub fn llm_core(spread: &[DrawnCard; 3], _cosmic: &Cosmic, prose: &str) -> String {
+    let mut s = String::from("  YOUR THREE CARDS\n\n");
     for (d, pos) in spread.iter().zip(POSITIONS.iter()) {
         s.push_str(&render_frame(&d.card, d.reversed));
         s.push_str(&format!("\n  {pos}: {}\n\n", card_label(d)));
@@ -267,6 +261,26 @@ pub fn render_llm_reading(
     s.push_str("  THE READING\n");
     s.push_str("--------------------------------------------------------------\n\n");
     s.push_str(&flatten_markdown(prose));
+    s
+}
+
+/// The deterministic offline reading: header + [`local_core`]. `typed` is the
+/// seeker's shuffle text (`None` to omit). Same inputs always yield the same text.
+pub fn local_reading(typed: Option<&str>, spread: &[DrawnCard; 3], cosmic: &Cosmic) -> String {
+    let mut s = render_header(typed, cosmic);
+    s.push_str(&local_core(spread, cosmic));
+    s
+}
+
+/// An LLM reading: header + [`llm_core`].
+pub fn render_llm_reading(
+    typed: Option<&str>,
+    spread: &[DrawnCard; 3],
+    cosmic: &Cosmic,
+    prose: &str,
+) -> String {
+    let mut s = render_header(typed, cosmic);
+    s.push_str(&llm_core(spread, cosmic, prose));
     s
 }
 
@@ -338,9 +352,13 @@ mod tests {
     #[test]
     fn local_reading_is_well_formed() {
         let spread = draw(seed_hash("what should I focus on?"));
-        let r = local_reading("what should I focus on?", &spread, &sky());
+        let r = local_reading(Some("what should I focus on?"), &spread, &sky());
         assert!(r.contains("YOUR READING"));
         assert!(r.contains("what should I focus on?"));
+        // the shareable (typed=None) form omits the echoed text
+        let shared = local_reading(None, &spread, &sky());
+        assert!(!shared.contains("what should I focus on?"));
+        assert!(!shared.contains("shuffled the deck with"));
         for pos in POSITIONS {
             assert!(
                 r.to_uppercase().contains(&pos.to_uppercase()),
@@ -360,15 +378,15 @@ mod tests {
     #[test]
     fn local_reading_is_deterministic() {
         let spread = draw(seed_hash("seed-q"));
-        let a = local_reading("seed-q", &spread, &sky());
-        let b = local_reading("seed-q", &spread, &sky());
+        let a = local_reading(Some("seed-q"), &spread, &sky());
+        let b = local_reading(Some("seed-q"), &spread, &sky());
         assert_eq!(a, b);
     }
 
     #[test]
     fn local_reading_colours_focus_card_with_sky() {
         let spread = draw(seed_hash("anything"));
-        let r = local_reading("anything", &spread, &sky());
+        let r = local_reading(Some("anything"), &spread, &sky());
         // the focus section names the moon phase + sign (Sagittarius on this date)
         assert!(r.contains("Sagittarius"));
     }

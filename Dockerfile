@@ -68,6 +68,12 @@ RUN printf '%s\n' \
 # (geomyidae runs as nobody; 1777 lets it write).
 RUN mkdir -p /var/cache/atd && chmod 1777 /var/cache/atd
 ENV ATD_STATE_DIR=/var/cache/atd
+# Shareable reading snapshots live INSIDE the docroot so geomyidae serves them
+# as plain text at /r/<id>.txt. Writable by nobody; a named volume mounted here
+# (see compose) persists permalinks across container recreations. (Must differ
+# from ATD_STATE_DIR — both name files <id>.txt.)
+RUN mkdir -p /srv/r && chmod 1777 /srv/r
+ENV ATD_SHARE_DIR=/srv/r
 
 USER nobody:nogroup
 EXPOSE 7072

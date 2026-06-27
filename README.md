@@ -72,6 +72,21 @@ gets crawled. So:
   static card meanings + positions + a cosmic-anchored line. The app **always**
   answers — no key, no network, or over budget.
 
+## Sharing & saving
+
+Every reading gets a stable **permalink**, printed at the bottom:
+```
+Share this reading -- bookmark it to keep it:
+  gopher://gopher.debene.dev:7072/0/r/acb2c85dcf9802d8.txt
+```
+The reading is persisted as a plain-text snapshot under a content-addressed id
+(the cards + UTC day, *not* the typed text) and served by geomyidae at
+`/r/<id>.txt`. Revisiting or **bookmarking that selector is how you "save" a
+reading** — there are no accounts, cookies, or server-side per-person history
+(that would contradict the no-tracking ethic). The stored copy omits the text
+you typed, so a permalink never exposes it. Snapshots are pruned after 30 days
+(`share::TTL_DAYS`). Per-user saved history is deliberately **not** built.
+
 ## Quickstart
 
 ```bash
@@ -139,7 +154,8 @@ Pure core / thin IO, like the siblings:
 | `frame` | pure | the ASCII card-frame renderer |
 | `reading` | pure | the spread description, the LLM prompt, the offline reading |
 | `site` | pure | the static tree (menus + pages) → files |
-| `cache` / `ratelimit` | IO (fs) | seed cache; per-IP bucket + daily cap |
+| `cache` / `ratelimit` | IO (fs) | reading-core cache; per-IP bucket + daily cap |
+| `share` | IO (fs) | persist reading snapshots + permalink for `/r/<id>.txt` |
 | `deepseek` | IO (net) | the one HTTPS call (behind the `net` feature) |
 | `dcgi` | IO | argv parsing + the orchestrated request path |
 
@@ -161,6 +177,7 @@ type-7 `Search` kind, added in v0.2.0).
 |---|---|---|
 | `DEEPSEEK_API_KEY` | _(unset)_ | LLM key; unset ⇒ always the offline reading |
 | `ATD_STATE_DIR` | temp dir | cache + rate-limit + daily-cap directory |
+| `ATD_SHARE_DIR` | `<state>/r` (image: `/srv/r`) | shareable reading snapshots, served at `/r/<id>.txt` |
 | `ATD_BASE` | _(empty)_ | selector base prefix (shared-docroot deploys) |
 | `ATD_DAILY_CAP` | `500` | max LLM calls per UTC day |
 | `ATD_RATE_CAPACITY` | `5` | per-IP token-bucket burst size |

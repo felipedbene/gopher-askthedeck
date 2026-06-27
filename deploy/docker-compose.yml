@@ -36,6 +36,9 @@ services:
     volumes:
       # Persist cache + rate-limit + daily cap across restarts.
       - atd-state:/var/cache/atd
+      # Persist shareable reading snapshots (served at /r/<id>.txt) so permalinks
+      # survive container recreations.
+      - atd-shared:/srv/r
     labels:
       # Opt into the existing Watchtower instance's label scope.
       com.centurylinklabs.watchtower.enable: "true"
@@ -47,3 +50,4 @@ services:
 
 volumes:
   atd-state:
+  atd-shared:
