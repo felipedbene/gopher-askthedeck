@@ -18,7 +18,7 @@ default = ["net"]
 # The DeepSeek HTTPS call. Off => the binary is pure/offline (build + the
 # deterministic local reading) and needs no TLS stack. The whole app works,
 # and the test suite is green, with this feature disabled.
-net = ["dep:ureq"]
+net = ["dep:ureq", "dep:serde_json"]
 
 [dependencies]
 # The shared gopher spine (menu model, .gph serializer, atomic publish). Pinned
@@ -30,6 +30,11 @@ gopher-core = { git = "https://github.com/felipedbene/gopher-core", tag = "v0.2.
 # shape (no tokio). rustls-backed; note ring has no big-endian support, so this
 # is the amd64 path (G5/ppc64 is a deferred seam — see README).
 ureq = { version = "2", optional = true, default-features = false, features = ["tls", "json"] }
+# Build the DeepSeek request body and parse its response. Only pulled in by `net`.
+serde_json = { version = "1", optional = true }
+# Load a local .env (gitignored) so the DeepSeek key need not be exported in dev.
+# A real exported env var always wins; in the container the key comes from compose.
+dotenvy = "0.15"
 
 [profile.release]
 opt-level = 3

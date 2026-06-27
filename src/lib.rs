@@ -6,10 +6,14 @@
 //! and rate limiter, the DeepSeek HTTP call). Only the IO layer knows about
 //! geomyidae or the network; the core is deterministic and clock-free.
 
+pub mod cache;
 pub mod cosmic;
 pub mod dcgi;
 pub mod deck;
+#[cfg(feature = "net")]
+pub mod deepseek;
 pub mod frame;
 pub mod meanings;
+pub mod ratelimit;
 pub mod reading;
 pub mod site;

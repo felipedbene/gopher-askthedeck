@@ -17,10 +17,13 @@
 //! not at all (geomyidae substitutes the `server`/`port` link tokens itself) and
 //! the selector only to discover our own base prefix for navigation links.
 
-use crate::cosmic::{self, CivilTime};
+use std::path::Path;
+
+use crate::cosmic::{self, CivilTime, Cosmic};
 use crate::deck::{self, DrawnCard};
-use crate::reading::local_reading;
+use crate::reading::{build_prompt, local_reading, render_llm_reading};
 use crate::site::selector;
+use crate::{cache, ratelimit};
 use gopher_core::{info, link, render_menu_index, Entry, ItemKind};
 
 /// The arguments geomyidae hands a dcgi, in its documented order.
@@ -99,6 +102,120 @@ pub fn render(args: &DcgiArgs, base: &str, now_unix: i64) -> String {
     let body = local_reading(q, &spread, &sky);
 
     render_menu_index(&reading_entries(&body, &spread, base))
+}
+
+// ---- the orchestrated path (cache + cap + rate limit + LLM) ----------------
+
+/// The reading generator the dcgi calls: a prompt in, the model's text out (or
+/// `None` on any failure). Injected so the cost/abuse path is testable without a
+/// network; production passes a closure wrapping the DeepSeek call.
+pub type Llm<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// Abuse + cost limits.
+pub struct Limits {
+    /// Max LLM calls per UTC day before everything falls back to local.
+    pub daily_call_cap: u32,
+    /// Token-bucket capacity per client (burst size).
+    pub rate_capacity: f64,
+    /// Token refill rate per second.
+    pub rate_refill_per_sec: f64,
+}
+
+/// Per-request context for [`handle`]. All IO is rooted at `state_dir`.
+pub struct Ctx<'a> {
+    /// Writable dir for the cache, rate-limit buckets, and the daily counter.
+    pub state_dir: &'a Path,
+    /// Hash of the client IP (hashed at the IO edge; the raw IP never arrives).
+    pub ip_hash: u64,
+    pub now_unix: i64,
+    pub base: &'a str,
+    pub limits: Limits,
+}
+
+/// The full dynamic path with all controls. `llm` is the (optional) reading
+/// generator: `Some(f)` when a key is configured, `None` for pure offline. It's
+/// injected so the cost/abuse logic is testable without a network. Order:
+/// rate-limit -> cache -> daily cap -> LLM (or local) -> cache.
+pub fn handle(args: &DcgiArgs, ctx: &Ctx, llm: Option<Llm>) -> String {
+    let q = args.question();
+    if q.is_empty() {
+        return render_menu_index(&prompt_entries(ctx.base));
+    }
+
+    // Per-IP throttle first — cheapest rejection, and it guards the LLM path.
+    if !ratelimit::allow(
+        ctx.state_dir,
+        ctx.ip_hash,
+        ctx.now_unix,
+        ctx.limits.rate_capacity,
+        ctx.limits.rate_refill_per_sec,
+    ) {
+        return render_menu_index(&throttle_entries(ctx.base));
+    }
+
+    let window = time_window(ctx.now_unix);
+    let seed = deck::seed_hash(&format!("{q}__{window}"));
+    let spread = deck::draw(seed);
+    let sky = cosmic::compute(CivilTime::from_unix(ctx.now_unix));
+    let key = format!("{seed:016x}");
+
+    // Cache hit => zero LLM calls.
+    let body = if let Some(cached) = cache::get(ctx.state_dir, &key, ctx.now_unix) {
+        cached
+    } else {
+        let body = produce(q, &spread, &sky, ctx, &window, llm);
+        let _ = cache::put(ctx.state_dir, &key, ctx.now_unix, &body);
+        body
+    };
+
+    render_menu_index(&reading_entries(&body, &spread, ctx.base))
+}
+
+/// Produce a fresh reading: try the LLM (if available and under the day's cap),
+/// else the deterministic local reading. Reserving the cap slot before the call
+/// means a transient outage degrades to local for the day rather than hammering
+/// a paid, failing API.
+fn produce(
+    q: &str,
+    spread: &[DrawnCard; 3],
+    sky: &Cosmic,
+    ctx: &Ctx,
+    window: &str,
+    llm: Option<Llm>,
+) -> String {
+    if let Some(llm) = llm {
+        if ratelimit::try_acquire_call(ctx.state_dir, window, ctx.limits.daily_call_cap) {
+            let prompt = build_prompt(q, spread, sky);
+            if let Some(text) = llm(&prompt) {
+                return render_llm_reading(q, spread, sky, &text);
+            }
+        }
+    }
+    local_reading(q, spread, sky)
+}
+
+/// The polite over-rate response — a text item, not an error.
+fn throttle_entries(base: &str) -> Vec<Entry> {
+    vec![
+        info("=============================================================="),
+        info("  EASY THERE"),
+        info("=============================================================="),
+        info(""),
+        info("  The deck needs a moment between readings -- you've drawn a"),
+        info("  few in quick succession. Sit with the last one; the cards"),
+        info("  don't like to be rushed. Try again shortly."),
+        info(""),
+        link(
+            ItemKind::Menu,
+            "Browse the 78 cards meanwhile",
+            selector(base, "cards/"),
+        ),
+        link(
+            ItemKind::Text,
+            "About this deck",
+            selector(base, "about.txt"),
+        ),
+    ]
 }
 
 /// The empty-question prompt: explain, and offer the type-7 item again.
@@ -260,6 +377,115 @@ mod tests {
         assert_eq!(base_prefix("/tarot/draw.dcgi", ""), "/tarot");
         assert_eq!(base_prefix("/draw.dcgi", ""), "");
         assert_eq!(base_prefix("/a/b/draw.dcgi?q\tterm", ""), "/a/b");
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn state_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("atd-handle-test-{name}"));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn loose_limits() -> Limits {
+        Limits {
+            daily_call_cap: 1000,
+            rate_capacity: 100.0,
+            rate_refill_per_sec: 1.0,
+        }
+    }
+
+    fn ctx<'a>(dir: &'a Path, limits: Limits) -> Ctx<'a> {
+        Ctx {
+            state_dir: dir,
+            ip_hash: 12345,
+            now_unix: NOW,
+            base: "",
+            limits,
+        }
+    }
+
+    #[test]
+    fn cache_hit_does_not_call_the_llm() {
+        let d = state_dir("cache");
+        let calls = AtomicUsize::new(0);
+        let llm = |_p: &str| -> Option<String> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some("## A Reading\n\nThe model speaks plainly here.".to_string())
+        };
+        let a = args_with("same question");
+        let c = ctx(&d, loose_limits());
+
+        let first = handle(&a, &c, Some(&llm));
+        let second = handle(&a, &c, Some(&llm));
+        assert_eq!(first, second, "same seed -> identical output");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "second hit served from cache"
+        );
+        assert!(first.contains("The model speaks plainly here."));
+    }
+
+    #[test]
+    fn falls_back_to_local_when_llm_unavailable() {
+        let d = state_dir("fallback");
+        let c = ctx(&d, loose_limits());
+        let out = handle(&args_with("guidance please"), &c, None);
+        assert!(out.contains("YOUR READING"), "deterministic local reading");
+        assert!(out.contains("guidance please"));
+    }
+
+    #[test]
+    fn falls_back_to_local_when_llm_errors() {
+        let d = state_dir("llmerr");
+        let llm = |_p: &str| -> Option<String> { None }; // simulates timeout/down
+        let c = ctx(&d, loose_limits());
+        let out = handle(&args_with("anything"), &c, Some(&llm));
+        assert!(out.contains("YOUR READING"));
+    }
+
+    #[test]
+    fn over_daily_cap_falls_back_to_local() {
+        let d = state_dir("cap");
+        let calls = AtomicUsize::new(0);
+        let llm = |_p: &str| -> Option<String> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some("## R\n\nmodel text".to_string())
+        };
+        let limits = Limits {
+            daily_call_cap: 1,
+            rate_capacity: 100.0,
+            rate_refill_per_sec: 1.0,
+        };
+        let c = ctx(&d, limits);
+        // first distinct question: uses the one cap slot -> LLM
+        let a = handle(&args_with("q-one"), &c, Some(&llm));
+        assert!(a.contains("model text"));
+        // second distinct question: cap exhausted -> local
+        let b = handle(&args_with("q-two"), &c, Some(&llm));
+        assert!(b.contains("YOUR READING"));
+        assert!(!b.contains("model text"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "only one paid call");
+    }
+
+    #[test]
+    fn rate_limit_throttles_a_burst_from_one_ip() {
+        let d = state_dir("rl");
+        let limits = Limits {
+            daily_call_cap: 1000,
+            rate_capacity: 2.0,
+            rate_refill_per_sec: 0.001, // effectively no refill in-test
+        };
+        let c = ctx(&d, limits);
+        // distinct questions so cache never absorbs the hit
+        assert!(handle(&args_with("a"), &c, None).contains("YOUR READING"));
+        assert!(handle(&args_with("b"), &c, None).contains("YOUR READING"));
+        let third = handle(&args_with("c"), &c, None);
+        assert!(
+            third.contains("EASY THERE"),
+            "burst beyond capacity is throttled"
+        );
     }
 
     #[test]

@@ -246,6 +246,45 @@ pub fn local_reading(question: &str, spread: &[DrawnCard; 3], cosmic: &Cosmic) -
     s
 }
 
+/// Render a reading whose narrative came from the LLM: the same header and
+/// framed cards as the offline reading, followed by the model's prose (markdown
+/// lightly flattened to plain gopher text and wrapped). The LLM's own `##`
+/// per-card headers carry the structure.
+pub fn render_llm_reading(
+    question: &str,
+    spread: &[DrawnCard; 3],
+    cosmic: &Cosmic,
+    prose: &str,
+) -> String {
+    let mut s = render_header(question, cosmic);
+    s.push_str("  YOUR THREE CARDS\n\n");
+    for (d, pos) in spread.iter().zip(POSITIONS.iter()) {
+        s.push_str(&render_frame(&d.card, d.reversed));
+        s.push_str(&format!("\n  {pos}: {}\n\n", card_label(d)));
+    }
+    s.push_str("--------------------------------------------------------------\n");
+    s.push_str("  THE READING\n");
+    s.push_str("--------------------------------------------------------------\n\n");
+    s.push_str(&flatten_markdown(prose));
+    s
+}
+
+/// Flatten LLM markdown to plain gopher text: drop heading hashes and bold/italic
+/// markers, then word-wrap each paragraph with a two-space indent. Blank lines
+/// are preserved as paragraph breaks.
+fn flatten_markdown(prose: &str) -> String {
+    let mut out = String::new();
+    for raw in prose.lines() {
+        let line = raw.trim_start_matches('#').trim_start().replace("**", "");
+        if line.trim().is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str(&wrap_indented(&line, 60, "  "));
+        }
+    }
+    out
+}
+
 /// Greedy word-wrap with a constant indent on every line.
 fn wrap_indented(text: &str, width: usize, indent: &str) -> String {
     let mut out = String::new();

@@ -10,7 +10,7 @@
 //! The system clock is read here (the IO edge); the pure core takes a
 //! `CivilTime` so the math and rendering stay deterministic and testable.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,7 +20,12 @@ use gopher_askthedeck::{dcgi, site};
 const DEFAULT_OUT: &str = "public";
 const DEFAULT_KEEP: usize = 3;
 
+/// An owned reading generator (the boxed counterpart of `dcgi::Llm`).
+type BoxedLlm = Box<dyn Fn(&str) -> Option<String>>;
+
 fn main() -> ExitCode {
+    // Load a local .env if present; a real exported env var always wins.
+    let _ = dotenvy::dotenv();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("build") => match run_build(&args[2..]) {
@@ -83,14 +88,67 @@ fn next_val<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> std::i
 }
 
 /// The dcgi entry: geomyidae calls `gopher-askthedeck draw $search $arguments
-/// $host $port $traversal $selector`. We parse argv, read the clock, and print a
-/// gophermap. The base prefix comes from the dcgi's own selector, falling back
-/// to $ATD_BASE.
+/// $host $port $traversal $selector`. We parse argv, read the clock + the
+/// client IP (from $REMOTE_ADDR, hashed immediately), and print a gophermap
+/// through the full cache + cap + rate-limit path.
 fn run_draw(rest: &[String]) {
     let args = dcgi::DcgiArgs::from_argv(rest);
     let env_base = std::env::var("ATD_BASE").unwrap_or_default();
     let base = dcgi::base_prefix(&args.selector, &env_base);
-    print!("{}", dcgi::render(&args, &base, unix_now()));
+
+    // Client IP -> hash at once; the raw address goes no further.
+    let ip_hash =
+        gopher_askthedeck::deck::seed_hash(&std::env::var("REMOTE_ADDR").unwrap_or_default());
+
+    let state_dir = std::env::var("ATD_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("gopher-askthedeck"));
+
+    let ctx = dcgi::Ctx {
+        state_dir: &state_dir,
+        ip_hash,
+        now_unix: unix_now(),
+        base: &base,
+        limits: dcgi::Limits {
+            daily_call_cap: env_u32("ATD_DAILY_CAP", 500),
+            rate_capacity: env_f64("ATD_RATE_CAPACITY", 5.0),
+            rate_refill_per_sec: env_f64("ATD_RATE_REFILL", 0.05),
+        },
+    };
+
+    print!("{}", dcgi::handle(&args, &ctx, llm().as_deref()));
+}
+
+/// The reading generator handed to the dcgi: `Some` when a DeepSeek key is
+/// configured and the `net` feature is built in, else `None` (pure offline).
+#[cfg(feature = "net")]
+fn llm() -> Option<BoxedLlm> {
+    let key = std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())?;
+    let timeout = env_u32("ATD_LLM_TIMEOUT", 12) as u64;
+    Some(Box::new(move |prompt: &str| {
+        gopher_askthedeck::deepseek::ask(&key, prompt, timeout)
+    }))
+}
+
+#[cfg(not(feature = "net"))]
+fn llm() -> Option<BoxedLlm> {
+    None
+}
+
+fn env_u32(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Current Unix time in seconds (UTC). The single clock read in the build path.
