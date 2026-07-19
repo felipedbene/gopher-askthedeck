@@ -1,5 +1,7 @@
 # gopher-askthedeck
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Rust](https://img.shields.io/badge/Rust-gopher-orange.svg) [![CI](https://github.com/felipedbene/gopher-askthedeck/actions/workflows/ci.yml/badge.svg)](https://github.com/felipedbene/gopher-askthedeck/actions/workflows/ci.yml)
+
 A three-card tarot reading, drawn live and served over **Gopher** (RFC 1436) by
 geomyidae. You select "Draw three cards" — a plain menu item, no question to type
 — the deck shuffles, and the spread is read in three positions, each against the
@@ -184,3 +186,10 @@ type-7 `Search` kind, added in v0.2.0).
 | `ATD_RATE_CAPACITY` | `5` | per-IP token-bucket burst size |
 | `ATD_RATE_REFILL` | `0.05` | tokens refilled per second (~1 / 20s) |
 | `ATD_LLM_TIMEOUT` | `12` | DeepSeek connect+read timeout (seconds) |
+
+---
+### Part of the gopher constellation
+**Servers & tools:** [gopher-core](https://github.com/felipedbene/gopher-core) · [gopher-cta](https://github.com/felipedbene/gopher-cta) · [gopher-blog](https://github.com/felipedbene/gopher-blog) · [gopher-askthedeck](https://github.com/felipedbene/gopher-askthedeck) · [gopher-spot](https://github.com/felipedbene/gopher-spot) · [the-economist-epub](https://github.com/felipedbene/the-economist-epub)
+**Clients:** [casquinha](https://github.com/felipedbene/casquinha) (Mac OS 9) · [detoca](https://github.com/felipedbene/detoca) (OS X 10.6) · [degelato](https://github.com/felipedbene/degelato) (OS X 10.5 PPC) · [deburrow](https://github.com/felipedbene/deburrow) (Android)
+**Protocol notes:** [fhb](https://github.com/felipedbene/fhb)
+---
