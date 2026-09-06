@@ -20,9 +20,11 @@ use gopher_askthedeck::{dcgi, site};
 const DEFAULT_OUT: &str = "public";
 const DEFAULT_KEEP: usize = 3;
 /// Hub cross-links advertised in the root menu (the hub topology shared with
-/// cta/blog). Override with `--cta-link` / `--phlog-link`; `none` disables one.
+/// cta/blog). Override with `--cta-link` / `--phlog-link` / `--src-link`;
+/// `none` disables one.
 const DEFAULT_CTA_LINK: &str = "gopher://gopher.debene.dev:70";
 const DEFAULT_PHLOG_LINK: &str = "gopher://gopher.debene.dev:7071";
+const DEFAULT_SRC_LINK: &str = "gopher://gopher.debene.dev:7073";
 
 /// An owned reading generator (the boxed counterpart of `dcgi::Llm`).
 type BoxedLlm = Box<dyn Fn(&str) -> Option<String>>;
@@ -57,6 +59,7 @@ fn run_build(flags: &[String]) -> std::io::Result<()> {
     // Hub cross-links to the sibling holes (the hub topology). `none` disables one.
     let mut cta_raw = DEFAULT_CTA_LINK.to_string();
     let mut phlog_raw = DEFAULT_PHLOG_LINK.to_string();
+    let mut src_raw = DEFAULT_SRC_LINK.to_string();
 
     let mut it = flags.iter();
     while let Some(f) = it.next() {
@@ -65,6 +68,7 @@ fn run_build(flags: &[String]) -> std::io::Result<()> {
             "--base-prefix" => base = next_val(&mut it, "--base-prefix")?,
             "--cta-link" => cta_raw = next_val(&mut it, "--cta-link")?,
             "--phlog-link" => phlog_raw = next_val(&mut it, "--phlog-link")?,
+            "--src-link" => src_raw = next_val(&mut it, "--src-link")?,
             "--keep" => {
                 keep = next_val(&mut it, "--keep")?
                     .parse()
@@ -74,15 +78,20 @@ fn run_build(flags: &[String]) -> std::io::Result<()> {
         }
     }
 
-    // Assemble the hub list (label, host, port), skipping any disabled link.
+    // Assemble the hub list (label, selector, host, port), skipping any
+    // disabled link.
     let cta = parse_gopher_link(&cta_raw).map_err(std::io::Error::other)?;
     let phlog = parse_gopher_link(&phlog_raw).map_err(std::io::Error::other)?;
+    let src = parse_gopher_link(&src_raw).map_err(std::io::Error::other)?;
     let mut hubs: Vec<site::Hub> = Vec::new();
     if let Some((h, p)) = &cta {
-        hubs.push(("Live CTA trains (gopher-cta)", h, *p));
+        hubs.push(("Live CTA trains (gopher-cta)", "/", h, *p));
     }
     if let Some((h, p)) = &phlog {
-        hubs.push(("Phlog -- the blog (gopher-blog)", h, *p));
+        hubs.push(("Phlog -- the blog (gopher-blog)", "/", h, *p));
+    }
+    if let Some((h, p)) = &src {
+        hubs.push(("Source tarballs (gopher-src)", "/src", h, *p));
     }
 
     let now = CivilTime::from_unix(unix_now());

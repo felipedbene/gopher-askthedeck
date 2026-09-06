@@ -17,10 +17,11 @@ use crate::meanings::meaning;
 use crate::{frame, reading};
 use gopher_core::{info, link, render_menu_index, Entry, ItemKind};
 
-/// A hub cross-link to a sibling gopher hole: `(label, host, port)`. Emitted as
-/// a type-1 link carrying a concrete host/port, so the client dials the sibling
-/// directly — this hole never proxies. This is the hub topology cta/blog use.
-pub type Hub<'a> = (&'a str, &'a str, u16);
+/// A hub cross-link to a sibling gopher hole: `(label, selector, host, port)`.
+/// Emitted as a type-1 link carrying a concrete host/port, so the client dials
+/// the sibling directly — this hole never proxies. This is the hub topology
+/// cta/blog use. The selector is usually `/`; gopher-src advertises `/src`.
+pub type Hub<'a> = (&'a str, &'a str, &'a str, u16);
 
 /// Build config: where in the selector namespace this hole lives, and the hub
 /// cross-links to advertise.
@@ -103,8 +104,8 @@ fn root_menu(cfg: &SiteConfig) -> String {
     if !cfg.hubs.is_empty() {
         entries.push(info(""));
         entries.push(info("  Elsewhere in this gopherhole:"));
-        for (label, host, port) in cfg.hubs {
-            entries.push(link(ItemKind::Menu, *label, "/").with_host(*host, *port));
+        for (label, selector, host, port) in cfg.hubs {
+            entries.push(link(ItemKind::Menu, *label, *selector).with_host(*host, *port));
         }
     }
 
@@ -367,13 +368,20 @@ mod tests {
         let c = SiteConfig {
             base: "",
             hubs: &[
-                ("Live CTA trains", "gopher.debene.dev", 70),
-                ("Phlog -- the blog", "gopher.debene.dev", 7071),
+                ("Live CTA trains", "/", "gopher.debene.dev", 70),
+                ("Phlog -- the blog", "/", "gopher.debene.dev", 7071),
+                (
+                    "Source tarballs (gopher-src)",
+                    "/src",
+                    "gopher.debene.dev",
+                    7073,
+                ),
             ],
         };
         let gph = root_menu(&c);
         assert!(gph.contains("[1|Live CTA trains|/|gopher.debene.dev|70]"));
         assert!(gph.contains("[1|Phlog -- the blog|/|gopher.debene.dev|7071]"));
+        assert!(gph.contains("[1|Source tarballs (gopher-src)|/src|gopher.debene.dev|7073]"));
         // and the local items still use placeholder tokens
         assert!(gph.contains("[1|Draw three cards|/draw.dcgi|server|port]"));
     }
